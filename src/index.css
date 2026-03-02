@@ -1,6 +1,6 @@
 /**
  * index.css - CFC Orders Dark Theme
- * v7.0.0 - Complete UI redesign: dark theme, table layout, metric cards, slide-in panel
+ * v7.1.0 - Phase 3C: Alerts bell badge, dropdown panel, per-order alert cards
  */
 
 /* ===== CSS VARIABLES ===== */
@@ -682,7 +682,7 @@ body {
 
 .btn-sm { padding: 4px 10px; font-size: 12px; }
 
-/* ===== ALERTS BANNER ===== */
+/* ===== ALERTS BANNER (legacy) ===== */
 .alerts-banner {
   background: rgba(245,158,11,0.06);
   border: 1px solid rgba(245,158,11,0.2);
@@ -715,6 +715,297 @@ body {
   padding: 2px 8px;
   border-radius: 4px;
   font-family: 'JetBrains Mono', monospace;
+}
+
+/* ===== ALERTS BELL + DROPDOWN (Phase 3C) ===== */
+.alerts-trigger-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.alerts-bell-btn {
+  position: relative;
+  padding: 7px 12px !important;
+  font-size: 15px !important;
+}
+
+.alerts-bell-btn.has-alerts {
+  border-color: rgba(239,68,68,0.4) !important;
+  background: rgba(239,68,68,0.08) !important;
+}
+
+.alerts-bell-btn.active {
+  border-color: var(--accent) !important;
+  background: var(--accent-glow) !important;
+}
+
+.alerts-badge-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  border-radius: 10px;
+  padding: 0 5px;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--bg-raised);
+  animation: alertPulse 2s infinite;
+}
+
+@keyframes alertPulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--bg-raised); }
+  50% { box-shadow: 0 0 0 2px var(--bg-raised), 0 0 8px rgba(239,68,68,0.4); }
+}
+
+.alerts-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 420px;
+  max-height: 520px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 200;
+  animation: dropdownIn 0.15s ease-out;
+}
+
+@keyframes dropdownIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.alerts-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+.alerts-dropdown-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.alerts-dropdown-body {
+  overflow-y: auto;
+  flex: 1;
+  max-height: 440px;
+}
+
+.alerts-loading {
+  text-align: center;
+  padding: 32px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.alerts-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 20px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* Alert groups within dropdown */
+.alerts-group {
+  border-bottom: 1px solid var(--border);
+}
+
+.alerts-group:last-child {
+  border-bottom: none;
+}
+
+.alerts-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(255,255,255,0.02);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.alerts-group-label {
+  flex: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.alerts-group-count {
+  background: rgba(239,68,68,0.15);
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Individual alert rows in dropdown */
+.alert-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px 10px 36px;
+  border-top: 1px solid rgba(42,46,62,0.4);
+  transition: background 0.1s;
+}
+
+.alert-row:hover {
+  background: var(--bg-hover);
+}
+
+.alert-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.alert-order-link {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  margin-right: 6px;
+}
+
+.alert-order-link:hover {
+  text-decoration: underline;
+}
+
+.alert-message {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: block;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.alert-time {
+  font-size: 10px;
+  color: var(--text-muted);
+  display: block;
+  margin-top: 2px;
+}
+
+.alert-resolve-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(16,185,129,0.1);
+  border: 1px solid rgba(16,185,129,0.25);
+  border-radius: 6px;
+  color: var(--success);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.alert-resolve-btn:hover {
+  background: rgba(16,185,129,0.2);
+  border-color: var(--success);
+  transform: scale(1.1);
+}
+
+/* ===== PER-ORDER ALERTS (Detail Panel) ===== */
+.order-alerts-section {
+  background: rgba(239,68,68,0.04);
+  border: 1px solid rgba(239,68,68,0.15);
+  border-radius: 10px;
+  padding: 14px !important;
+  margin-bottom: 16px !important;
+}
+
+.order-alerts-section h4 {
+  color: var(--danger) !important;
+  margin-bottom: 12px !important;
+}
+
+.order-alert-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.order-alert-card:last-child {
+  margin-bottom: 0;
+}
+
+.order-alert-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.order-alert-type {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.order-alert-msg {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.order-alert-time {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+.alert-resolve-inline {
+  flex-shrink: 0;
+  color: var(--success) !important;
+  border-color: rgba(16,185,129,0.3) !important;
+  font-size: 11px !important;
+  padding: 3px 8px !important;
+  white-space: nowrap;
+}
+
+.alert-resolve-inline:hover {
+  background: rgba(16,185,129,0.15) !important;
+  border-color: var(--success) !important;
 }
 
 /* ===== MODALS (for shipping manager etc) ===== */
@@ -824,6 +1115,7 @@ body {
 /* ===== RESPONSIVE ===== */
 @media (max-width: 1200px) {
   .metrics-row { grid-template-columns: repeat(4, 1fr); }
+  .alerts-dropdown { width: 360px; }
 }
 
 @media (max-width: 768px) {
@@ -831,4 +1123,5 @@ body {
   .detail-panel { width: 100%; }
   .orders-table { font-size: 12px; }
   .content-area { padding: 16px; }
+  .alerts-dropdown { width: 320px; right: -60px; }
 }
