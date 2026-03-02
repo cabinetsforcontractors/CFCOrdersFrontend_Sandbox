@@ -1,18 +1,20 @@
 /**
  * BrainChat.jsx - Brain AI Chat Panel for CFC Orders
- * v1.0.0 - Collapsible chat that sends requests to the Brain backend
+ * v2.0.0 - Header-triggered panel (no floating button)
  *
- * Floating purple button in bottom-right opens a chat panel.
+ * Props:
+ *   isOpen: boolean - controlled by parent (App.jsx header button)
+ *   onClose: function - called to close panel
+ *
  * Sends to Brain /ask endpoint with "orders" domain.
- * Token is entered once and stored in component state.
+ * Token entered once and stored in component state.
  */
 
 import { useState, useRef, useEffect } from 'react'
 
 const BRAIN_URL = 'https://brain-backend-6uhk.onrender.com'
 
-export default function BrainChat() {
-  const [isOpen, setIsOpen] = useState(false)
+export default function BrainChat({ isOpen, onClose }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -87,92 +89,89 @@ export default function BrainChat() {
     }
   }
 
-  // --- Floating button (closed state) ---
-  if (!isOpen) {
-    return (
-      <button
-        onClick={() => setIsOpen(true)}
-        style={{
-          position: 'fixed', bottom: '20px', right: '20px',
-          width: '56px', height: '56px', borderRadius: '50%',
-          backgroundColor: '#7c3aed', color: 'white', border: 'none',
-          cursor: 'pointer', fontSize: '24px',
-          boxShadow: '0 4px 12px rgba(124,58,237,0.4)',
-          zIndex: 9999, display: 'flex',
-          alignItems: 'center', justifyContent: 'center'
-        }}
-        title="Open Brain Chat"
-      >{'\u{1F9E0}'}</button>
-    )
-  }
+  if (!isOpen) return null
 
-  // --- Chat panel (open state) ---
   return (
     <div style={{
-      position: 'fixed', bottom: '20px', right: '20px',
-      width: '380px', maxWidth: 'calc(100vw - 40px)',
-      height: '500px', maxHeight: 'calc(100vh - 100px)',
-      backgroundColor: '#1a1a2e', borderRadius: '12px',
-      boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+      position: 'fixed', top: '56px', right: '0',
+      width: '400px', maxWidth: 'calc(100vw - 20px)',
+      bottom: '0',
+      backgroundColor: 'var(--bg-raised)',
+      borderLeft: '1px solid var(--border)',
       display: 'flex', flexDirection: 'column',
-      zIndex: 9999, overflow: 'hidden',
-      border: '1px solid rgba(124,58,237,0.25)'
+      zIndex: 200, overflow: 'hidden'
     }}>
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '12px 16px', backgroundColor: '#7c3aed', color: 'white'
+        padding: '12px 16px', borderBottom: '1px solid var(--border)',
+        background: 'var(--bg-card)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ fontSize: '18px' }}>{'\u{1F9E0}'}</span>
-          <span style={{ fontWeight: 'bold', fontSize: '14px' }}>Brain Chat</span>
-          <span style={{ fontSize: '11px', opacity: 0.8 }}>Orders</span>
+          <span style={{ fontWeight: '600', fontSize: '14px', color: 'var(--text)' }}>Brain Chat</span>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Orders</span>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           <button onClick={() => setMessages([])}
-            style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white',
-              borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '11px' }}
+            style={{
+              background: 'var(--bg-hover)', border: '1px solid var(--border)',
+              color: 'var(--text-dim)', borderRadius: '5px', padding: '3px 10px',
+              cursor: 'pointer', fontSize: '11px', fontFamily: 'inherit'
+            }}
           >Clear</button>
-          <button onClick={() => setIsOpen(false)}
-            style={{ background: 'none', border: 'none', color: 'white',
-              cursor: 'pointer', fontSize: '18px', padding: '0 4px', lineHeight: '1' }}
+          <button onClick={onClose}
+            style={{
+              background: 'none', border: 'none', color: 'var(--text-dim)',
+              cursor: 'pointer', fontSize: '18px', padding: '0 4px', lineHeight: '1'
+            }}
           >{'\u00D7'}</button>
         </div>
       </div>
 
-      {/* Token setup (only shown if no token set yet) */}
+      {/* Token setup */}
       {!token && (
-        <div style={{ padding: '16px', backgroundColor: '#16213e', borderBottom: '1px solid #333' }}>
-          <div style={{ color: '#aaa', fontSize: '12px', marginBottom: '8px' }}>
+        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+          <div style={{ color: 'var(--text-dim)', fontSize: '12px', marginBottom: '8px' }}>
             Enter your Brain admin token to connect:
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <input type="password" value={tokenInput}
               onChange={e => setTokenInput(e.target.value)}
               placeholder="Admin token..."
-              style={{ flex: 1, padding: '8px', backgroundColor: '#0f3460',
-                border: '1px solid #444', borderRadius: '6px', color: 'white', fontSize: '13px' }}
+              style={{
+                flex: 1, padding: '8px 10px', backgroundColor: 'var(--bg-input)',
+                border: '1px solid var(--border)', borderRadius: '6px',
+                color: 'var(--text)', fontSize: '13px', fontFamily: 'inherit', outline: 'none'
+              }}
               onKeyDown={e => e.key === 'Enter' && saveToken()}
             />
             <button onClick={saveToken}
-              style={{ padding: '8px 12px', backgroundColor: '#7c3aed', color: 'white',
-                border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
+              style={{
+                padding: '8px 14px', backgroundColor: 'var(--accent)', color: '#fff',
+                border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
+                fontFamily: 'inherit', fontWeight: '500'
+              }}
             >Save</button>
           </div>
         </div>
       )}
 
-      {/* Messages area */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px',
-        display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      {/* Messages */}
+      <div style={{
+        flex: 1, overflowY: 'auto', padding: '14px',
+        display: 'flex', flexDirection: 'column', gap: '10px'
+      }}>
         {messages.length === 0 && (
-          <div style={{ color: '#666', textAlign: 'center', marginTop: '40px',
-            fontSize: '13px', lineHeight: '1.8' }}>
+          <div style={{
+            color: 'var(--text-muted)', textAlign: 'center', marginTop: '40px',
+            fontSize: '13px', lineHeight: '1.8'
+          }}>
             <div style={{ fontSize: '32px', marginBottom: '8px' }}>{'\u{1F9E0}'}</div>
-            Ask the Brain anything about orders.<br/>
-            <span style={{ color: '#7c3aed' }}>"Check status on order 5353"</span><br/>
-            <span style={{ color: '#7c3aed' }}>"What orders need payment links?"</span><br/>
-            <span style={{ color: '#7c3aed' }}>"Check pricing for Shaker Ivory B15"</span>
+            Ask the Brain anything about orders.<br />
+            <span style={{ color: 'var(--accent)' }}>"Check status on order 5353"</span><br />
+            <span style={{ color: 'var(--accent)' }}>"What orders need payment links?"</span><br />
+            <span style={{ color: 'var(--accent)' }}>"Check pricing for Shaker Ivory B15"</span>
           </div>
         )}
 
@@ -183,46 +182,57 @@ export default function BrainChat() {
             <div style={{
               padding: '10px 14px',
               borderRadius: msg.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
-              backgroundColor: msg.role === 'user' ? '#7c3aed' :
-                               msg.role === 'error' ? '#dc3545' : '#16213e',
-              color: 'white', fontSize: '13px', lineHeight: '1.5',
-              whiteSpace: 'pre-wrap', wordBreak: 'break-word'
+              backgroundColor: msg.role === 'user' ? 'var(--accent)' :
+                               msg.role === 'error' ? 'var(--danger)' : 'var(--bg-card)',
+              color: msg.role === 'user' || msg.role === 'error' ? '#fff' : 'var(--text)',
+              fontSize: '13px', lineHeight: '1.5',
+              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              border: msg.role === 'assistant' ? '1px solid var(--border)' : 'none'
             }}>{msg.content}</div>
             {msg.model && (
-              <div style={{ fontSize: '10px', color: '#666', marginTop: '4px', paddingLeft: '4px' }}>
-                {msg.model} - {msg.confidence}
+              <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px', paddingLeft: '4px' }}>
+                {msg.model} &middot; {msg.confidence}
               </div>
             )}
           </div>
         ))}
 
         {loading && (
-          <div style={{ alignSelf: 'flex-start', padding: '10px 14px',
-            borderRadius: '12px 12px 12px 4px', backgroundColor: '#16213e',
-            color: '#7c3aed', fontSize: '13px' }}>
+          <div style={{
+            alignSelf: 'flex-start', padding: '10px 14px',
+            borderRadius: '12px 12px 12px 4px', backgroundColor: 'var(--bg-card)',
+            color: 'var(--accent)', fontSize: '13px',
+            border: '1px solid var(--border)'
+          }}>
             Thinking...
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input area */}
-      <div style={{ padding: '12px', borderTop: '1px solid #333', backgroundColor: '#16213e' }}>
+      {/* Input */}
+      <div style={{
+        padding: '12px 14px', borderTop: '1px solid var(--border)',
+        background: 'var(--bg-card)'
+      }}>
         <div style={{ display: 'flex', gap: '8px' }}>
           <input ref={inputRef} type="text" value={input}
             onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
             placeholder={token ? "Ask the Brain..." : "Set token first..."}
             disabled={!token || loading}
-            style={{ flex: 1, padding: '10px 14px', backgroundColor: '#0f3460',
-              border: '1px solid #444', borderRadius: '8px', color: 'white',
-              fontSize: '13px', outline: 'none' }}
+            style={{
+              flex: 1, padding: '10px 14px', backgroundColor: 'var(--bg-input)',
+              border: '1px solid var(--border)', borderRadius: '8px',
+              color: 'var(--text)', fontSize: '13px', fontFamily: 'inherit', outline: 'none'
+            }}
           />
           <button onClick={sendMessage}
             disabled={!token || loading || !input.trim()}
             style={{
               padding: '10px 16px',
-              backgroundColor: (!token || loading || !input.trim()) ? '#444' : '#7c3aed',
-              color: 'white', border: 'none', borderRadius: '8px',
+              backgroundColor: (!token || loading || !input.trim()) ? 'var(--bg-hover)' : 'var(--accent)',
+              color: (!token || loading || !input.trim()) ? 'var(--text-muted)' : '#fff',
+              border: 'none', borderRadius: '8px',
               cursor: (!token || loading || !input.trim()) ? 'not-allowed' : 'pointer',
               fontSize: '14px', fontWeight: 'bold'
             }}
