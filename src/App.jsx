@@ -1,6 +1,6 @@
 /**
  * App.jsx - Main Application
- * v5.10.0 - AI Config Panel + Dynamic Theming
+ * v5.10.0 - Phase 4: Email Communications panel wired
  * 
  * Orchestrates:
  * - Login/auth
@@ -8,20 +8,20 @@
  * - Component rendering
  * - Modal management
  * - Comprehensive AI Summary
- * - AI Config Panel (Connie's natural language UI customization)
+ * - Email Communications (Phase 4)
  */
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import StatusBar from './components/StatusBar'
 import OrderCard from './components/OrderCard'
 import ShippingManager from './components/ShippingManager'
 import OrderComments from './components/OrderComments'
-import AiConfigPanel from './components/AiConfigPanel'
+import EmailPanel from './components/EmailPanel'
 
 import { API_URL, APP_PASSWORD } from './config'
 
-// Base status mapping (labels can be overridden by AI config)
-const BASE_STATUS_MAP = {
+// Status mapping for display
+const STATUS_MAP = {
   'needs_payment_link': { label: '1-Need Invoice', class: 'needs-invoice' },
   'awaiting_payment': { label: '2-Awaiting Pay', class: 'awaiting-pay' },
   'needs_warehouse_order': { label: '3-Need to Order', class: 'needs-order' },
@@ -59,120 +59,13 @@ function App() {
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [shippingModal, setShippingModal] = useState(null)
   
+  // Email panel state (Phase 4)
+  const [emailOrder, setEmailOrder] = useState(null)
+  
   // Comprehensive AI Summary state
   const [comprehensiveSummary, setComprehensiveSummary] = useState('')
   const [summaryLoading, setSummaryLoading] = useState(false)
-
-  // AI Config state
-  const [aiConfig, setAiConfig] = useState({})
   
-  // Build dynamic STATUS_MAP from base + AI label overrides
-  const STATUS_MAP = useMemo(() => {
-    const map = { ...BASE_STATUS_MAP }
-    if (aiConfig.statusLabels) {
-      Object.entries(aiConfig.statusLabels).forEach(([key, label]) => {
-        if (map[key] && label) {
-          map[key] = { ...map[key], label }
-        }
-      })
-    }
-    return map
-  }, [aiConfig.statusLabels])
-
-  // Generate dynamic CSS from AI config
-  const dynamicCSS = useMemo(() => {
-    const parts = []
-    
-    // Status color overrides
-    if (aiConfig.statusColors) {
-      Object.entries(aiConfig.statusColors).forEach(([status, color]) => {
-        if (!color) return
-        const cssClass = BASE_STATUS_MAP[status]?.class
-        if (!cssClass) return
-        parts.push(`.filter-btn.${cssClass} { border-color: ${color} !important; color: ${color} !important; }`)
-        parts.push(`.filter-btn.${cssClass}.active { background-color: ${color} !important; color: #fff !important; }`)
-        parts.push(`.status-badge.${cssClass} { background-color: ${color} !important; }`)
-        parts.push(`.status-dropdown.${cssClass} { border-color: ${color} !important; color: ${color} !important; }`)
-        parts.push(`.order-card.${cssClass} { border-left-color: ${color} !important; }`)
-      })
-    }
-    
-    // Header color
-    if (aiConfig.headerColor) {
-      parts.push(`.app-header { background-color: ${aiConfig.headerColor} !important; }`)
-    }
-    
-    // Accent color
-    if (aiConfig.accentColor) {
-      parts.push(`button:not(.modal-close):not(.filter-btn) { background-color: ${aiConfig.accentColor} !important; }`)
-    }
-    
-    // Font size
-    if (aiConfig.fontSize) {
-      parts.push(`body { font-size: ${aiConfig.fontSize} !important; }`)
-    }
-    
-    // Dark theme
-    if (aiConfig.theme === 'dark') {
-      parts.push(`
-        body { background-color: #0f0f23 !important; color: #e0e0e0 !important; }
-        .app { background-color: #0f0f23 !important; }
-        .app-header { background-color: #1a1a2e !important; }
-        .status-bar { background-color: #16213e !important; border-color: #2a2a4a !important; }
-        .orders-grid { background-color: #0f0f23 !important; }
-        .order-card { background-color: #16213e !important; color: #e0e0e0 !important; border-color: #2a2a4a !important; }
-        .order-card:hover { background-color: #1a1a3e !important; }
-        .modal { background-color: #16213e !important; color: #e0e0e0 !important; }
-        .modal-overlay { background-color: rgba(0,0,0,0.7) !important; }
-        .modal-header { background-color: #1a1a2e !important; border-color: #2a2a4a !important; }
-        .filter-btn { border-color: #444 !important; }
-        input, select, textarea { background-color: #0f3460 !important; color: #e0e0e0 !important; border-color: #2a2a4a !important; }
-        .login-form { background-color: #16213e !important; color: #e0e0e0 !important; }
-      `)
-    }
-    
-    // Custom CSS pass-through
-    if (aiConfig.customCSS) {
-      parts.push(aiConfig.customCSS)
-    }
-    
-    return parts.join('\n')
-  }, [aiConfig])
-
-  // Handle AI config changes
-  const handleConfigChange = (changes) => {
-    setAiConfig(prev => {
-      const updated = { ...prev }
-      
-      if (changes.statusColors) {
-        updated.statusColors = { ...(prev.statusColors || {}), ...changes.statusColors }
-      }
-      if (changes.statusLabels) {
-        updated.statusLabels = { ...(prev.statusLabels || {}), ...changes.statusLabels }
-      }
-      if (changes.theme !== undefined && changes.theme !== null) {
-        updated.theme = changes.theme
-      }
-      if (changes.headerColor !== undefined) {
-        updated.headerColor = changes.headerColor
-      }
-      if (changes.fontSize !== undefined) {
-        updated.fontSize = changes.fontSize
-      }
-      if (changes.accentColor !== undefined) {
-        updated.accentColor = changes.accentColor
-      }
-      if (changes.cardStyle !== undefined) {
-        updated.cardStyle = changes.cardStyle
-      }
-      if (changes.customCSS !== undefined) {
-        updated.customCSS = changes.customCSS
-      }
-      
-      return updated
-    })
-  }
-
   // Check saved login
   useEffect(() => {
     const saved = localStorage.getItem('cfc_logged_in')
@@ -289,6 +182,21 @@ function App() {
     loadOrders()
   }
   
+  // === EMAIL PANEL (Phase 4) ===
+  
+  const handleOpenEmail = (order) => {
+    setEmailOrder(order)
+  }
+  
+  const handleCloseEmail = () => {
+    setEmailOrder(null)
+  }
+  
+  const handleEmailSent = () => {
+    setEmailOrder(null)
+    loadOrders()
+  }
+  
   // === COMPREHENSIVE AI SUMMARY ===
   
   const generateComprehensiveSummary = async () => {
@@ -344,22 +252,19 @@ function App() {
   
   if (!isLoggedIn) {
     return (
-      <>
-        <style>{dynamicCSS}</style>
-        <div className="login-container">
-          <form onSubmit={handleLogin} className="login-form">
-            <h2>CFC Orders</h2>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
-            />
-            <button type="submit">Login</button>
-            {loginError && <p className="error">{loginError}</p>}
-          </form>
-        </div>
-      </>
+      <div className="login-container">
+        <form onSubmit={handleLogin} className="login-form">
+          <h2>CFC Orders</h2>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Enter password"
+          />
+          <button type="submit">Login</button>
+          {loginError && <p className="error">{loginError}</p>}
+        </form>
+      </div>
     )
   }
 
@@ -378,12 +283,9 @@ function App() {
 
   return (
     <div className="app">
-      {/* Dynamic CSS from AI Config */}
-      <style>{dynamicCSS}</style>
-      
       {/* Header */}
       <header className="app-header">
-        <h1>CFC Orders <span style={{ fontSize: '11px', fontWeight: 400, opacity: 0.7, marginLeft: '8px' }}>SANDBOX</span></h1>
+        <h1>CFC Orders</h1>
         <div className="header-actions">
           <button onClick={loadOrders} disabled={loading}>
             {loading ? 'Loading...' : 'Refresh'}
@@ -416,11 +318,22 @@ function App() {
               order={order}
               onOpenDetail={openOrderDetail}
               onOpenShippingManager={(shipment) => openShippingManager(shipment, order)}
+              onOpenEmail={handleOpenEmail}
               onUpdate={loadOrders}
             />
           ))
         )}
       </main>
+      
+      {/* Email Panel - Phase 4 (slide-in from right) */}
+      {emailOrder && (
+        <EmailPanel
+          orderId={emailOrder.order_id}
+          customerEmail={emailOrder.email}
+          onClose={handleCloseEmail}
+          onSent={handleEmailSent}
+        />
+      )}
       
       {/* Order Detail Modal - Redesigned */}
       {selectedOrder && (
@@ -605,12 +518,6 @@ function App() {
           </div>
         </div>
       )}
-
-      {/* AI Config Panel — Connie's natural language UI customization */}
-      <AiConfigPanel
-        apiUrl={API_URL}
-        onConfigChange={handleConfigChange}
-      />
       
       {/* CSS for spinner animation */}
       <style>{`
