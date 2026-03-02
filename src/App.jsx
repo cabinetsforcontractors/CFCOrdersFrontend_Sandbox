@@ -1,91 +1,91 @@
 /**
- * App.jsx - Main Application
- * v5.11.0 - Brain Chat + Environment Toggle
+ * App.jsx - CFC Orders Dashboard
+ * v7.0.0 - Dark theme, table layout, metric cards, slide-in detail panel
  * 
  * Orchestrates:
  * - Login/auth
- * - Order loading
- * - Component rendering
- * - Modal management
- * - Comprehensive AI Summary
- * - Email Communications (Phase 4)
- * - Brain Chat (Phase 5)
+ * - Order loading + filtering
+ * - Metric cards (clickable filters)
+ * - Table layout with sortable columns
+ * - Slide-in detail panel with AI Summary
+ * - Shipping Manager, Email Panel
+ * - Brain Chat (header button, Task 3)
  * - Sandbox/Live environment toggle
  */
 
-import { useState, useEffect } from 'react'
-import StatusBar from './components/StatusBar'
-import OrderCard from './components/OrderCard'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import ShippingManager from './components/ShippingManager'
-import OrderComments from './components/OrderComments'
 import EmailPanel from './components/EmailPanel'
 import BrainChat from './components/BrainChat'
 
-import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL, OTHER_ENV_LABEL } from './config'
+import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL } from './config'
 
-// Status mapping for display
-const STATUS_MAP = {
-  'needs_payment_link': { label: '1-Need Invoice', class: 'needs-invoice' },
-  'awaiting_payment': { label: '2-Awaiting Pay', class: 'awaiting-pay' },
-  'needs_warehouse_order': { label: '3-Need to Order', class: 'needs-order' },
-  'awaiting_warehouse': { label: '4-At Warehouse', class: 'at-warehouse' },
-  'needs_bol': { label: '5-Need BOL', class: 'needs-bol' },
-  'awaiting_shipment': { label: '6-Ready Ship', class: 'ready-ship' },
-  'complete': { label: 'Complete', class: 'complete' }
-}
-
-const STATUS_OPTIONS = [
-  { value: 'needs_payment_link', label: '1-Need Invoice' },
-  { value: 'awaiting_payment', label: '2-Awaiting Pay' },
-  { value: 'needs_warehouse_order', label: '3-Need to Order' },
-  { value: 'awaiting_warehouse', label: '4-At Warehouse' },
-  { value: 'needs_bol', label: '5-Need BOL' },
-  { value: 'awaiting_shipment', label: '6-Ready Ship' },
-  { value: 'complete', label: 'Complete' }
+// ─── STATUS CONFIG ───────────────────────────────────────────────────────────
+const STATUSES = [
+  { key: 'needs_payment_link', label: 'Need Invoice', short: 'Invoice', badge: 'sb-invoice', card: 'mc-invoice' },
+  { key: 'awaiting_payment',   label: 'Awaiting Pay', short: 'Pay',     badge: 'sb-pay',     card: 'mc-pay' },
+  { key: 'needs_warehouse_order', label: 'Need to Order', short: 'Order', badge: 'sb-order', card: 'mc-order' },
+  { key: 'awaiting_warehouse', label: 'At Warehouse', short: 'Warehouse', badge: 'sb-warehouse', card: 'mc-warehouse' },
+  { key: 'needs_bol',         label: 'Need BOL',     short: 'BOL',     badge: 'sb-bol',     card: 'mc-bol' },
+  { key: 'awaiting_shipment', label: 'Ready Ship',   short: 'Ship',    badge: 'sb-ship',    card: 'mc-ship' },
+  { key: 'complete',          label: 'Complete',      short: 'Done',    badge: 'sb-complete', card: 'mc-complete' },
 ]
 
+const STATUS_MAP = Object.fromEntries(STATUSES.map(s => [s.key, s]))
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+const fmtMoney = (v) => '$' + parseFloat(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'
+
+const formatAddress = (o) => {
+  const parts = []
+  if (o.street) parts.push(o.street)
+  const csz = []
+  if (o.city) csz.push(o.city)
+  if (o.state) csz.push(o.zip_code ? `${o.state} ${o.zip_code}` : o.state)
+  else if (o.zip_code) csz.push(o.zip_code)
+  if (csz.length) parts.push(csz.join(', '))
+  return parts.join(', ')
+}
+
+// ─── APP ─────────────────────────────────────────────────────────────────────
 function App() {
-  // Auth state
+  // Auth
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState('')
-  
-  // Data state
+
+  // Data
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
-  
-  // Filter state
+
+  // Filters
   const [statusFilter, setStatusFilter] = useState(null)
-  const [showArchived, setShowArchived] = useState(false)
-  
-  // Modal state
+  const [showComplete, setShowComplete] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortCol, setSortCol] = useState('order_date')
+  const [sortDir, setSortDir] = useState('desc')
+
+  // Detail panel
   const [selectedOrder, setSelectedOrder] = useState(null)
-  const [shippingModal, setShippingModal] = useState(null)
-  
-  // Email panel state (Phase 4)
-  const [emailOrder, setEmailOrder] = useState(null)
-  
-  // Comprehensive AI Summary state
+  const [panelTab, setPanelTab] = useState('details')
   const [comprehensiveSummary, setComprehensiveSummary] = useState('')
   const [summaryLoading, setSummaryLoading] = useState(false)
-  
-  // Check saved login
+
+  // Modals
+  const [shippingModal, setShippingModal] = useState(null)
+  const [emailOrder, setEmailOrder] = useState(null)
+
+  // Brain Chat
+  const [brainOpen, setBrainOpen] = useState(false)
+
+  // ─── AUTH ────────────────────────────────────────────────────────────────
   useEffect(() => {
-    const saved = localStorage.getItem('cfc_logged_in')
-    if (saved === 'true') {
-      setIsLoggedIn(true)
-    }
+    if (localStorage.getItem('cfc_logged_in') === 'true') setIsLoggedIn(true)
   }, [])
-  
-  // Load data when logged in
-  useEffect(() => {
-    if (isLoggedIn) {
-      loadOrders()
-    }
-  }, [isLoggedIn])
-  
-  // === AUTH ===
-  
+
+  useEffect(() => { if (isLoggedIn) loadOrders() }, [isLoggedIn])
+
   const handleLogin = (e) => {
     e.preventDefault()
     if (password === APP_PASSWORD) {
@@ -96,74 +96,124 @@ function App() {
       setLoginError('Incorrect password')
     }
   }
-  
+
   const handleLogout = () => {
     setIsLoggedIn(false)
     localStorage.removeItem('cfc_logged_in')
   }
-  
-  // === DATA LOADING ===
-  
-  const loadOrders = async () => {
+
+  // ─── DATA ───────────────────────────────────────────────────────────────
+  const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
       const res = await fetch(`${API_URL}/orders?limit=200&include_complete=true`)
       const data = await res.json()
-      if (data.orders) {
-        setOrders(data.orders)
-      }
+      if (data.orders) setOrders(data.orders)
     } catch (err) {
       console.error('Failed to load orders:', err)
     }
     setLoading(false)
-  }
-  
-  // === FILTERING ===
-  
-  const getFilteredOrders = () => {
-    let filtered = orders
-    
-    // Filter by status
-    if (statusFilter) {
-      filtered = filtered.filter(o => o.current_status === statusFilter)
-    } else if (showArchived) {
-      // Show ONLY complete/archived orders
-      filtered = filtered.filter(o => o.current_status === 'complete')
+  }, [])
+
+  // ─── METRICS ────────────────────────────────────────────────────────────
+  const counts = useMemo(() => {
+    const c = {}
+    STATUSES.forEach(s => { c[s.key] = 0 })
+    orders.forEach(o => { if (c[o.current_status] !== undefined) c[o.current_status]++ })
+    return c
+  }, [orders])
+
+  // ─── FILTERING + SORTING ────────────────────────────────────────────────
+  const filteredOrders = useMemo(() => {
+    let list = orders
+
+    // Tab: active vs complete
+    if (showComplete) {
+      list = list.filter(o => o.current_status === 'complete')
     } else {
-      // Hide complete orders (show active only)
-      filtered = filtered.filter(o => o.current_status !== 'complete')
+      list = list.filter(o => o.current_status !== 'complete')
     }
-    
-    return filtered
-  }
-  
-  // === STATUS UPDATES ===
-  
-  const updateOrderStatus = async (orderId, field, value) => {
-    try {
-      await fetch(`${API_URL}/orders/${orderId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: value })
-      })
-      loadOrders()
-    } catch (err) {
-      console.error('Failed to update order:', err)
+
+    // Metric card filter
+    if (statusFilter) {
+      list = list.filter(o => o.current_status === statusFilter)
+    }
+
+    // Search
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      list = list.filter(o =>
+        String(o.order_id || '').toLowerCase().includes(q) ||
+        (o.company_name || '').toLowerCase().includes(q) ||
+        (o.customer_name || '').toLowerCase().includes(q) ||
+        (o.email || '').toLowerCase().includes(q) ||
+        (o.city || '').toLowerCase().includes(q)
+      )
+    }
+
+    // Sort
+    list = [...list].sort((a, b) => {
+      let av = a[sortCol], bv = b[sortCol]
+      if (sortCol === 'order_total' || sortCol === 'days_open') {
+        av = parseFloat(av || 0); bv = parseFloat(bv || 0)
+      } else {
+        av = String(av || '').toLowerCase(); bv = String(bv || '').toLowerCase()
+      }
+      if (av < bv) return sortDir === 'asc' ? -1 : 1
+      if (av > bv) return sortDir === 'asc' ? 1 : -1
+      return 0
+    })
+
+    return list
+  }, [orders, showComplete, statusFilter, searchQuery, sortCol, sortDir])
+
+  const handleSort = (col) => {
+    if (sortCol === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortCol(col)
+      setSortDir('asc')
     }
   }
-  
-  // === MODALS ===
-  
-  const openOrderDetail = (order) => {
+
+  const handleMetricClick = (key) => {
+    if (key === 'complete') {
+      setShowComplete(true)
+      setStatusFilter(null)
+    } else {
+      setShowComplete(false)
+      setStatusFilter(statusFilter === key ? null : key)
+    }
+  }
+
+  // ─── DETAIL PANEL ──────────────────────────────────────────────────────
+  const openDetail = (order) => {
     setSelectedOrder(order)
-    setComprehensiveSummary('') // Reset summary when opening new order
+    setPanelTab('details')
+    setComprehensiveSummary('')
   }
-  
-  const closeOrderDetail = () => {
+
+  const closeDetail = () => {
     setSelectedOrder(null)
     setComprehensiveSummary('')
   }
-  
+
+  // ─── AI SUMMARY ─────────────────────────────────────────────────────────
+  const generateSummary = async () => {
+    if (!selectedOrder) return
+    setSummaryLoading(true)
+    setComprehensiveSummary('')
+    try {
+      const res = await fetch(`${API_URL}/orders/${selectedOrder.order_id}/comprehensive-summary`, { method: 'POST' })
+      const data = await res.json()
+      setComprehensiveSummary(data.summary || data.detail || 'No summary returned.')
+    } catch (err) {
+      setComprehensiveSummary('Failed to generate summary.')
+    }
+    setSummaryLoading(false)
+  }
+
+  // ─── SHIPPING ───────────────────────────────────────────────────────────
   const openShippingManager = (shipment, order) => {
     setShippingModal({
       shipment,
@@ -179,89 +229,35 @@ function App() {
       }
     })
   }
-  
-  const closeShippingManager = () => {
-    setShippingModal(null)
-    loadOrders()
-  }
-  
-  // === EMAIL PANEL (Phase 4) ===
-  
-  const handleOpenEmail = (order) => {
-    setEmailOrder(order)
-  }
-  
-  const handleCloseEmail = () => {
-    setEmailOrder(null)
-  }
-  
-  const handleEmailSent = () => {
-    setEmailOrder(null)
-    loadOrders()
-  }
-  
-  // === COMPREHENSIVE AI SUMMARY ===
-  
-  const generateComprehensiveSummary = async () => {
-    if (!selectedOrder) return
-    
-    setSummaryLoading(true)
-    setComprehensiveSummary('')
-    
+
+  const closeShippingManager = () => { setShippingModal(null); loadOrders() }
+
+  // ─── EMAIL ──────────────────────────────────────────────────────────────
+  const handleEmailSent = () => { setEmailOrder(null); loadOrders() }
+
+  // ─── STATUS UPDATE ──────────────────────────────────────────────────────
+  const updateStatus = async (orderId, value) => {
     try {
-      const res = await fetch(`${API_URL}/orders/${selectedOrder.order_id}/comprehensive-summary`, {
-        method: 'POST'
+      await fetch(`${API_URL}/orders/${orderId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_status: value })
       })
-      const data = await res.json()
-      
-      if (data.summary) {
-        setComprehensiveSummary(data.summary)
-      } else if (data.detail) {
-        setComprehensiveSummary(`Error: ${data.detail}`)
-      }
+      loadOrders()
     } catch (err) {
-      console.error('Failed to generate summary:', err)
-      setComprehensiveSummary('Failed to generate summary. Please try again.')
+      console.error('Failed to update:', err)
     }
-    
-    setSummaryLoading(false)
   }
-  
-  // === HELPER: Format Address ===
-  const formatAddress = (order) => {
-    const parts = []
-    if (order.street) parts.push(order.street)
-    
-    const cityStateZip = []
-    if (order.city) cityStateZip.push(order.city)
-    if (order.state) {
-      if (order.zip_code) {
-        cityStateZip.push(`${order.state} ${order.zip_code}`)
-      } else {
-        cityStateZip.push(order.state)
-      }
-    } else if (order.zip_code) {
-      cityStateZip.push(order.zip_code)
-    }
-    
-    if (cityStateZip.length > 0) {
-      parts.push(cityStateZip.join(', '))
-    }
-    
-    return parts.join(', ')
-  }
-  
-  // === RENDER: LOGIN ===
-  
+
+  // ─── RENDER: LOGIN ──────────────────────────────────────────────────────
   if (!isLoggedIn) {
     return (
       <div className="login-container">
-        <form onSubmit={handleLogin} className="login-form">
+        <form className="login-form" onSubmit={handleLogin}>
           <h2>CFC Orders</h2>
           <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            type="password" value={password}
+            onChange={e => setPassword(e.target.value)}
             placeholder="Enter password"
           />
           <button type="submit">Login</button>
@@ -271,279 +267,367 @@ function App() {
     )
   }
 
-  // Gate main app render until orders are ready
-  if (loading) {
+  if (loading && orders.length === 0) {
     return <div className="loading">Loading orders...</div>
   }
 
-  if (!Array.isArray(orders)) {
-    return <div className="loading">Loading orders...</div>
-  }
+  const activeCount = orders.filter(o => o.current_status !== 'complete').length
+  const completeCount = counts.complete
 
-  // === RENDER: MAIN APP ===
-
-  const filteredOrders = getFilteredOrders()
-
+  // ─── RENDER: MAIN ───────────────────────────────────────────────────────
   return (
     <div className="app">
-      {/* Header */}
+      {/* ═══ HEADER ═══ */}
       <header className="app-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <h1 style={{ margin: 0 }}>CFC Orders</h1>
-          {/* Environment badge */}
-          {IS_SANDBOX && (
-            <span style={{
-              backgroundColor: '#f59e0b',
-              color: '#000',
-              padding: '2px 8px',
-              borderRadius: '4px',
-              fontSize: '11px',
-              fontWeight: 'bold',
-              letterSpacing: '0.5px'
-            }}>SANDBOX</span>
-          )}
+        <div className="header-left">
+          <h1>CFC <span>Orders</span></h1>
+          {IS_SANDBOX && <span className="env-badge env-sandbox">SANDBOX</span>}
         </div>
         <div className="header-actions">
-          {/* Switch environment button */}
-          <button
-            onClick={() => window.open(OTHER_ENV_URL, '_blank')}
+          {/* Search in header */}
+          <div className="search-box">
+            <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>&#x1F50D;</span>
+            <input
+              type="text" placeholder="Search orders..."
+              value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+          {/* Brain Chat toggle - LEFT of Open Live */}
+          <button onClick={() => setBrainOpen(v => !v)} title="Brain Chat"
             style={{
-              backgroundColor: IS_SANDBOX ? '#28a745' : '#f59e0b',
-              color: IS_SANDBOX ? 'white' : '#000',
-              border: 'none',
-              padding: '6px 12px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: '500'
+              background: brainOpen ? 'rgba(124,58,237,0.2)' : undefined,
+              borderColor: brainOpen ? '#7c3aed' : undefined,
+              color: brainOpen ? '#a78bfa' : undefined
+            }}
+          >
+            &#x1F9E0; Brain
+          </button>
+          {/* Open Live / Open Sandbox */}
+          <button onClick={() => window.open(OTHER_ENV_URL, '_blank')}
+            style={{
+              background: IS_SANDBOX ? 'rgba(16,185,129,0.12)' : 'rgba(245,158,11,0.12)',
+              borderColor: IS_SANDBOX ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)',
+              color: IS_SANDBOX ? 'var(--success)' : 'var(--warning)'
             }}
           >
             {IS_SANDBOX ? '\u{1F7E2} Open Live' : '\u{1F9EA} Open Sandbox'}
           </button>
           <button onClick={loadOrders} disabled={loading}>
-            {loading ? 'Loading...' : 'Refresh'}
+            {loading ? '...' : '\u{21BB} Refresh'}
           </button>
           <button onClick={handleLogout}>Logout</button>
         </div>
       </header>
-      
-      {/* Status Filter Bar */}
-      <StatusBar 
-        orders={orders}
-        activeFilter={statusFilter}
-        onFilterChange={setStatusFilter}
-        showArchived={showArchived}
-        onToggleArchived={setShowArchived}
-      />
-      
-      {/* Orders Grid */}
-      <main className="orders-grid">
-        {loading ? (
-          <div className="loading">Loading orders...</div>
-        ) : !Array.isArray(filteredOrders) ? (
-          <div className="loading">Loading orders...</div>
-        ) : filteredOrders.length === 0 ? (
-          <div className="empty">No orders found</div>
-        ) : (
-          filteredOrders.map(order => (
-            <OrderCard
-              key={order.order_id}
-              order={order}
-              onOpenDetail={openOrderDetail}
-              onOpenShippingManager={(shipment) => openShippingManager(shipment, order)}
-              onOpenEmail={handleOpenEmail}
-              onUpdate={loadOrders}
-            />
-          ))
-        )}
-      </main>
-      
-      {/* Email Panel - Phase 4 (slide-in from right) */}
+
+      {/* ═══ MAIN CONTENT ═══ */}
+      <div className="main-content">
+        <div className="content-area">
+
+          {/* ─── METRIC CARDS ─── */}
+          <div className="metrics-row">
+            {STATUSES.map(s => (
+              <div
+                key={s.key}
+                className={`metric-card ${s.card}${statusFilter === s.key || (s.key === 'complete' && showComplete) ? ' active' : ''}`}
+                onClick={() => handleMetricClick(s.key)}
+              >
+                <div className="metric-count">{counts[s.key]}</div>
+                <div className="metric-label">{s.short}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* ─── TABS ROW ─── */}
+          <div className="tabs-row">
+            <div className="tabs">
+              <button
+                className={`tab-btn${!showComplete ? ' active' : ''}`}
+                onClick={() => { setShowComplete(false); setStatusFilter(null) }}
+              >
+                Active <span className="tab-count">{activeCount}</span>
+              </button>
+              <button
+                className={`tab-btn${showComplete ? ' active' : ''}`}
+                onClick={() => { setShowComplete(true); setStatusFilter(null) }}
+              >
+                Complete <span className="tab-count">{completeCount}</span>
+              </button>
+            </div>
+            <div className="tab-actions">
+              {statusFilter && (
+                <button className="btn btn-sm" onClick={() => setStatusFilter(null)}>
+                  Clear filter
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* ─── ORDERS TABLE ─── */}
+          {filteredOrders.length === 0 ? (
+            <div className="empty">No orders found</div>
+          ) : (
+            <table className="orders-table">
+              <thead>
+                <tr>
+                  <th onClick={() => handleSort('order_id')}>Order {sortCol === 'order_id' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
+                  <th onClick={() => handleSort('company_name')}>Customer {sortCol === 'company_name' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
+                  <th onClick={() => handleSort('current_status')}>Status</th>
+                  <th onClick={() => handleSort('order_total')}>Total {sortCol === 'order_total' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
+                  <th onClick={() => handleSort('order_date')}>Date {sortCol === 'order_date' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
+                  <th onClick={() => handleSort('days_open')}>Age {sortCol === 'days_open' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
+                  <th>Warehouse</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredOrders.map(order => {
+                  const st = STATUS_MAP[order.current_status] || {}
+                  const days = parseInt(order.days_open || 0)
+                  const ageClass = days > 14 ? 'age-danger' : days > 7 ? 'age-warn' : ''
+                  const isSelected = selectedOrder?.order_id === order.order_id
+
+                  // Extract first warehouse from shipments
+                  const wh = order.shipments?.[0]?.warehouse || ''
+
+                  return (
+                    <tr key={order.order_id}
+                      className={isSelected ? 'row-selected' : ''}
+                      onClick={() => openDetail(order)}
+                    >
+                      <td><span className="order-id">#{order.order_id}</span></td>
+                      <td>
+                        <div className="customer-name">{order.company_name || order.customer_name || '—'}</div>
+                        {order.city && <div className="customer-company">{order.city}{order.state ? `, ${order.state}` : ''}</div>}
+                      </td>
+                      <td>
+                        <span className={`status-badge ${st.badge || ''}`}>
+                          <span className="status-dot" />
+                          {st.label || order.current_status}
+                        </span>
+                      </td>
+                      <td><span className="amount">{fmtMoney(order.order_total)}</span></td>
+                      <td style={{ color: 'var(--text-dim)', fontSize: '12px' }}>{fmtDate(order.order_date)}</td>
+                      <td><span className={`age-cell ${ageClass}`}>{days}d</span></td>
+                      <td>{wh && <span className="warehouse-tag">{wh}</span>}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* ═══ DETAIL PANEL (slide-in from right) ═══ */}
+        <div className={`detail-panel${selectedOrder ? ' open' : ''}`}>
+          {selectedOrder && (
+            <>
+              {/* Panel Header */}
+              <div className="panel-header">
+                <h3>
+                  <span className="order-id">#{selectedOrder.order_id}</span>
+                  <span className="amount" style={{ marginLeft: '8px' }}>{fmtMoney(selectedOrder.order_total)}</span>
+                </h3>
+                <button className="panel-close" onClick={closeDetail}>{'\u00D7'}</button>
+              </div>
+
+              {/* Panel Tabs */}
+              <div className="panel-tabs">
+                <button className={`panel-tab${panelTab === 'details' ? ' active' : ''}`} onClick={() => setPanelTab('details')}>Details</button>
+                <button className={`panel-tab${panelTab === 'ai' ? ' active' : ''}`} onClick={() => setPanelTab('ai')}>AI Summary</button>
+                <button className={`panel-tab${panelTab === 'actions' ? ' active' : ''}`} onClick={() => setPanelTab('actions')}>Actions</button>
+              </div>
+
+              {/* Panel Content */}
+              <div className="panel-content">
+
+                {/* ── DETAILS TAB ── */}
+                {panelTab === 'details' && (
+                  <>
+                    <div className="detail-section">
+                      <h4>Customer</h4>
+                      <div className="detail-row">
+                        <span className="detail-label">Company</span>
+                        <span className="detail-value">{selectedOrder.company_name || selectedOrder.customer_name || '—'}</span>
+                      </div>
+                      <div className="detail-row">
+                        <span className="detail-label">Email</span>
+                        <span className="detail-value mono">{selectedOrder.email || '—'}</span>
+                      </div>
+                      <div className="detail-row">
+                        <span className="detail-label">Phone</span>
+                        <span className="detail-value mono">{selectedOrder.phone || '—'}</span>
+                      </div>
+                      <div className="detail-row">
+                        <span className="detail-label">Address</span>
+                        <span className="detail-value">{formatAddress(selectedOrder) || '—'}</span>
+                      </div>
+                    </div>
+
+                    <div className="detail-section">
+                      <h4>Order Info</h4>
+                      <div className="detail-row">
+                        <span className="detail-label">Status</span>
+                        <span className={`status-badge ${STATUS_MAP[selectedOrder.current_status]?.badge || ''}`}>
+                          <span className="status-dot" />
+                          {STATUS_MAP[selectedOrder.current_status]?.label || selectedOrder.current_status}
+                        </span>
+                      </div>
+                      <div className="detail-row">
+                        <span className="detail-label">Date</span>
+                        <span className="detail-value">{fmtDate(selectedOrder.order_date)}</span>
+                      </div>
+                      <div className="detail-row">
+                        <span className="detail-label">Days Open</span>
+                        <span className="detail-value mono">{selectedOrder.days_open || 0}</span>
+                      </div>
+                      <div className="detail-row">
+                        <span className="detail-label">Total</span>
+                        <span className="detail-value mono" style={{ color: 'var(--success)' }}>{fmtMoney(selectedOrder.order_total)}</span>
+                      </div>
+                      {selectedOrder.notes && (
+                        <div className="detail-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
+                          <span className="detail-label">Notes</span>
+                          <span className="detail-value" style={{ fontSize: '12px', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>{selectedOrder.notes}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Shipments */}
+                    {selectedOrder.shipments?.length > 0 && (
+                      <div className="detail-section">
+                        <h4>Shipments</h4>
+                        {selectedOrder.shipments.map((s, i) => (
+                          <div key={i} style={{
+                            background: 'var(--bg-input)', borderRadius: '8px', padding: '10px 12px', marginBottom: '8px',
+                            border: '1px solid var(--border)'
+                          }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                              <span className="warehouse-tag">{s.warehouse || 'Unknown'}</span>
+                              <span className="amount" style={{ fontSize: '12px' }}>{s.weight_lbs ? `${s.weight_lbs} lbs` : ''}</span>
+                            </div>
+                            {s.pro_number && (
+                              <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>PRO: <span className="mono">{s.pro_number}</span></div>
+                            )}
+                            <button className="btn btn-sm" style={{ marginTop: '8px', fontSize: '11px' }}
+                              onClick={() => openShippingManager(s, selectedOrder)}
+                            >
+                              Manage Shipping
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Status change */}
+                    <div className="detail-section">
+                      <h4>Change Status</h4>
+                      <select
+                        value={selectedOrder.current_status}
+                        onChange={e => {
+                          updateStatus(selectedOrder.order_id, e.target.value)
+                          setSelectedOrder({ ...selectedOrder, current_status: e.target.value })
+                        }}
+                        style={{
+                          width: '100%', padding: '8px 10px', background: 'var(--bg-input)',
+                          border: '1px solid var(--border)', borderRadius: '6px',
+                          color: 'var(--text)', fontFamily: 'inherit', fontSize: '13px'
+                        }}
+                      >
+                        {STATUSES.map(s => (
+                          <option key={s.key} value={s.key}>{s.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                )}
+
+                {/* ── AI SUMMARY TAB ── */}
+                {panelTab === 'ai' && (
+                  <div className="detail-section">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                      <h4 style={{ margin: 0 }}>AI Analysis</h4>
+                      <button className="btn btn-primary btn-sm" onClick={generateSummary} disabled={summaryLoading}>
+                        {summaryLoading ? 'Generating...' : 'Generate Summary'}
+                      </button>
+                    </div>
+                    <div style={{
+                      background: 'var(--bg-input)', borderRadius: '8px', padding: '16px',
+                      minHeight: '200px', border: '1px solid var(--border)'
+                    }}>
+                      {summaryLoading ? (
+                        <div style={{ textAlign: 'center', paddingTop: '40px' }}>
+                          <div style={{
+                            width: '32px', height: '32px',
+                            border: '3px solid var(--border)',
+                            borderTop: '3px solid var(--accent)',
+                            borderRadius: '50%',
+                            animation: 'spin 1s linear infinite',
+                            margin: '0 auto 12px'
+                          }} />
+                          <div style={{ color: 'var(--text-dim)', fontSize: '13px' }}>Analyzing order data...</div>
+                        </div>
+                      ) : comprehensiveSummary ? (
+                        <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6', fontSize: '13px', color: 'var(--text)' }}>
+                          {comprehensiveSummary}
+                        </div>
+                      ) : (
+                        <div style={{ textAlign: 'center', paddingTop: '50px', color: 'var(--text-muted)', fontSize: '13px', lineHeight: '1.8' }}>
+                          Click "Generate Summary" for a comprehensive<br />AI analysis of this order including<br />all history and communications.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── ACTIONS TAB ── */}
+                {panelTab === 'actions' && (
+                  <div className="detail-section">
+                    <h4>Quick Actions</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <button className="btn" onClick={() => setEmailOrder(selectedOrder)}>
+                        &#x2709; Send Email
+                      </button>
+                      {selectedOrder.shipments?.length > 0 && (
+                        <button className="btn" onClick={() => openShippingManager(selectedOrder.shipments[0], selectedOrder)}>
+                          &#x1F69A; Shipping Manager
+                        </button>
+                      )}
+                      <button className="btn btn-danger" onClick={() => {
+                        if (confirm('Archive this order?')) updateStatus(selectedOrder.order_id, 'complete')
+                      }}>
+                        Archive Order
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ═══ BRAIN CHAT (triggered from header, panel overlays) ═══ */}
+      <BrainChat isOpen={brainOpen} onClose={() => setBrainOpen(false)} />
+
+      {/* ═══ EMAIL PANEL ═══ */}
       {emailOrder && (
         <EmailPanel
           orderId={emailOrder.order_id}
           customerEmail={emailOrder.email}
-          onClose={handleCloseEmail}
+          onClose={() => setEmailOrder(null)}
           onSent={handleEmailSent}
         />
       )}
-      
-      {/* Brain Chat - Floating panel (Phase 5) */}
-      <BrainChat />
-      
-      {/* Order Detail Modal - Redesigned */}
-      {selectedOrder && (
-        <div className="modal-overlay" onClick={closeOrderDetail}>
-          <div 
-            className="modal order-detail-modal" 
-            onClick={(e) => e.stopPropagation()} 
-            style={{ 
-              maxHeight: '90vh', 
-              display: 'flex', 
-              flexDirection: 'column',
-              width: '420px',
-              maxWidth: '95vw'
-            }}
-          >
-            {/* Header: Order # and Total */}
-            <div className="modal-header" style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center',
-              padding: '16px 20px',
-              backgroundColor: '#f8f9fa',
-              borderBottom: '1px solid #e0e0e0'
-            }}>
-              <h2 style={{ margin: 0, fontSize: '20px' }}>Order #{selectedOrder.order_id}</h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <span style={{ fontSize: '18px', fontWeight: 'bold', color: '#28a745' }}>
-                  ${parseFloat(selectedOrder.order_total || 0).toFixed(2)}
-                </span>
-                <button 
-                  className="modal-close" 
-                  onClick={closeOrderDetail}
-                  style={{
-                    width: '28px',
-                    height: '28px',
-                    borderRadius: '50%',
-                    border: 'none',
-                    backgroundColor: '#eee',
-                    cursor: 'pointer',
-                    fontSize: '18px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}
-                >{'\u00D7'}</button>
-              </div>
-            </div>
-            
-            <div className="modal-body" style={{ 
-              flex: 1, 
-              display: 'flex', 
-              flexDirection: 'column', 
-              overflow: 'hidden',
-              padding: '16px'
-            }}>
-              {/* Order Details Section */}
-              <div style={{ 
-                border: '1px solid #e0e0e0', 
-                borderRadius: '6px', 
-                padding: '12px 14px',
-                marginBottom: '12px',
-                backgroundColor: '#fff'
-              }}>
-                {/* Row 1: Order Details - Company Name */}
-                <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#666', marginBottom: '4px' }}>
-                  Order Details - <span style={{ color: '#333', fontWeight: 'normal' }}>{selectedOrder.company_name || selectedOrder.customer_name}</span>
-                </div>
-                
-                {/* Row 2: Address */}
-                <div style={{ fontSize: '11px', color: '#666', marginBottom: '8px' }}>
-                  {formatAddress(selectedOrder)}
-                </div>
-                
-                {/* Row 3: Date | Days Open */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '13px', color: '#333' }}>
-                    Date: {new Date(selectedOrder.order_date).toLocaleDateString()}
-                  </span>
-                  <span style={{ fontSize: '13px', color: '#333' }}>
-                    Days Open: <strong>{selectedOrder.days_open}</strong>
-                  </span>
-                </div>
-                
-                {/* Row 4: Status | Generate AI Summary Button */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '13px', color: '#333' }}>
-                    Status: {STATUS_MAP[selectedOrder.current_status]?.label || selectedOrder.current_status}
-                  </span>
-                  <button
-                    onClick={generateComprehensiveSummary}
-                    disabled={summaryLoading}
-                    style={{
-                      padding: '5px 10px',
-                      backgroundColor: summaryLoading ? '#ccc' : '#28a745',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: summaryLoading ? 'not-allowed' : 'pointer',
-                      fontSize: '11px',
-                      fontWeight: '500'
-                    }}
-                  >
-                    {summaryLoading ? 'Generating...' : 'Generate AI Summary'}
-                  </button>
-                </div>
-              </div>
-              
-              {/* AI Analysis Section */}
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '250px' }}>
-                <h3 style={{ margin: '0 0 8px 0', fontSize: '12px', fontWeight: 'bold', color: '#666' }}>
-                  AI Analysis
-                </h3>
-                
-                {/* Summary Content Area */}
-                <div style={{ 
-                  flex: 1, 
-                  backgroundColor: '#f8f9fa', 
-                  borderRadius: '6px', 
-                  padding: '14px',
-                  overflow: 'auto',
-                  minHeight: '220px'
-                }}>
-                  {summaryLoading ? (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                      <div style={{ textAlign: 'center' }}>
-                        <div style={{ 
-                          width: '36px', 
-                          height: '36px', 
-                          border: '3px solid #e0e0e0',
-                          borderTop: '3px solid #28a745',
-                          borderRadius: '50%',
-                          animation: 'spin 1s linear infinite',
-                          margin: '0 auto 12px'
-                        }}></div>
-                        <p style={{ color: '#666', margin: 0, fontSize: '13px' }}>Generating comprehensive analysis...</p>
-                      </div>
-                    </div>
-                  ) : comprehensiveSummary ? (
-                    <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6', fontSize: '13px' }}>
-                      {comprehensiveSummary}
-                    </div>
-                  ) : (
-                    <div style={{ 
-                      display: 'flex', 
-                      flexDirection: 'column',
-                      alignItems: 'center', 
-                      justifyContent: 'center', 
-                      height: '100%',
-                      color: '#999'
-                    }}>
-                      <p style={{ margin: 0, textAlign: 'center', fontSize: '13px', lineHeight: '1.6' }}>
-                        Click "Generate AI Summary" above to create<br/>
-                        a comprehensive AI analysis of this order<br/>
-                        including all history and communications.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Shipping Manager Modal */}
+
+      {/* ═══ SHIPPING MANAGER MODAL ═══ */}
       {shippingModal && (
         <div className="modal-overlay shipping-modal-overlay" onClick={closeShippingManager}>
-          <div className="modal shipping-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal shipping-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Shipping - {shippingModal.shipment.warehouse}</h2>
               <button className="modal-close" onClick={closeShippingManager}>{'\u00D7'}</button>
             </div>
             <div className="modal-body">
-              <ShippingManager 
+              <ShippingManager
                 shipment={shippingModal.shipment}
                 orderId={shippingModal.orderId}
                 customerInfo={shippingModal.customerInfo}
@@ -554,14 +638,6 @@ function App() {
           </div>
         </div>
       )}
-      
-      {/* CSS for spinner animation */}
-      <style>{`
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   )
 }
