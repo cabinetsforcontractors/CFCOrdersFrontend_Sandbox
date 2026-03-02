@@ -1,6 +1,6 @@
 /**
  * App.jsx - Main Application
- * v5.10.0 - Phase 4: Email Communications panel wired
+ * v5.11.0 - Brain Chat + Environment Toggle
  * 
  * Orchestrates:
  * - Login/auth
@@ -9,6 +9,8 @@
  * - Modal management
  * - Comprehensive AI Summary
  * - Email Communications (Phase 4)
+ * - Brain Chat (Phase 5)
+ * - Sandbox/Live environment toggle
  */
 
 import { useState, useEffect } from 'react'
@@ -17,8 +19,9 @@ import OrderCard from './components/OrderCard'
 import ShippingManager from './components/ShippingManager'
 import OrderComments from './components/OrderComments'
 import EmailPanel from './components/EmailPanel'
+import BrainChat from './components/BrainChat'
 
-import { API_URL, APP_PASSWORD } from './config'
+import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL, OTHER_ENV_LABEL } from './config'
 
 // Status mapping for display
 const STATUS_MAP = {
@@ -285,8 +288,38 @@ function App() {
     <div className="app">
       {/* Header */}
       <header className="app-header">
-        <h1>CFC Orders</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <h1 style={{ margin: 0 }}>CFC Orders</h1>
+          {/* Environment badge */}
+          {IS_SANDBOX && (
+            <span style={{
+              backgroundColor: '#f59e0b',
+              color: '#000',
+              padding: '2px 8px',
+              borderRadius: '4px',
+              fontSize: '11px',
+              fontWeight: 'bold',
+              letterSpacing: '0.5px'
+            }}>SANDBOX</span>
+          )}
+        </div>
         <div className="header-actions">
+          {/* Switch environment button */}
+          <button
+            onClick={() => window.open(OTHER_ENV_URL, '_blank')}
+            style={{
+              backgroundColor: IS_SANDBOX ? '#28a745' : '#f59e0b',
+              color: IS_SANDBOX ? 'white' : '#000',
+              border: 'none',
+              padding: '6px 12px',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: '500'
+            }}
+          >
+            {IS_SANDBOX ? '\u{1F7E2} Open Live' : '\u{1F9EA} Open Sandbox'}
+          </button>
           <button onClick={loadOrders} disabled={loading}>
             {loading ? 'Loading...' : 'Refresh'}
           </button>
@@ -335,6 +368,9 @@ function App() {
         />
       )}
       
+      {/* Brain Chat - Floating panel (Phase 5) */}
+      <BrainChat />
+      
       {/* Order Detail Modal - Redesigned */}
       {selectedOrder && (
         <div className="modal-overlay" onClick={closeOrderDetail}>
@@ -378,7 +414,7 @@ function App() {
                     alignItems: 'center',
                     justifyContent: 'center'
                   }}
-                >×</button>
+                >{'\u00D7'}</button>
               </div>
             </div>
             
@@ -504,7 +540,7 @@ function App() {
           <div className="modal shipping-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Shipping - {shippingModal.shipment.warehouse}</h2>
-              <button className="modal-close" onClick={closeShippingManager}>×</button>
+              <button className="modal-close" onClick={closeShippingManager}>{'\u00D7'}</button>
             </div>
             <div className="modal-body">
               <ShippingManager 
