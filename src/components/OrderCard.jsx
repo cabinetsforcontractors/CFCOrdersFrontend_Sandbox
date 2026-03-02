@@ -1,7 +1,7 @@
 /**
  * OrderCard.jsx
  * Display a single order with status, customer info, shipments
- * v5.11.0 - Alert background colors + clock icon for shipped orders
+ * v5.12.0 - Phase 4: Email button for customer communications
  */
 
 import { useState } from 'react'
@@ -46,14 +46,14 @@ const ALERT_BACKGROUNDS = {
 
 // Alert type labels
 const ALERT_TYPE_LABELS = {
-  'out_of_stock': '⚠️ OUT OF STOCK',
-  'backorder': '⚠️ BACKORDER',
-  'inventory_issue': '⚠️ INVENTORY ISSUE',
-  'no_action_after_payment': '⏰ NO ACTION - PAID',
-  'shipped_no_payment': '💰 SHIPPED - NO PAYMENT',
-  'no_response': '📧 NO WAREHOUSE RESPONSE',
-  'not_available': '⚠️ NOT AVAILABLE',
-  'discontinued': '⚠️ DISCONTINUED'
+  'out_of_stock': '\u26a0\ufe0f OUT OF STOCK',
+  'backorder': '\u26a0\ufe0f BACKORDER',
+  'inventory_issue': '\u26a0\ufe0f INVENTORY ISSUE',
+  'no_action_after_payment': '\u23f0 NO ACTION - PAID',
+  'shipped_no_payment': '\ud83d\udcb0 SHIPPED - NO PAYMENT',
+  'no_response': '\ud83d\udce7 NO WAREHOUSE RESPONSE',
+  'not_available': '\u26a0\ufe0f NOT AVAILABLE',
+  'discontinued': '\u26a0\ufe0f DISCONTINUED'
 }
 
 const getAgeLabel = (orderDate) => {
@@ -68,7 +68,7 @@ const getAgeLabel = (orderDate) => {
   return `${diffDays} Days`
 }
 
-const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onUpdate }) => {
+const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, onUpdate }) => {
   if (!order) return null
   
   const [isUpdating, setIsUpdating] = useState(false)
@@ -469,6 +469,30 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onUpdate }) => 
           </div>
         )}
       </div>
+
+      {/* Email Button - Phase 4 */}
+      {onOpenEmail && (
+        <div style={{ marginTop: '8px' }} onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={() => onOpenEmail(order)}
+            style={{
+              backgroundColor: '#1976d2',
+              color: 'white',
+              border: 'none',
+              padding: '6px 14px',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: '500',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            📧 Email Customer
+          </button>
+        </div>
+      )}
 
       {/* AI Summary */}
       {order.ai_summary && (
