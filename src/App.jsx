@@ -1,6 +1,6 @@
 /**
  * App.jsx - CFC Orders Dashboard
- * v7.0.0 - Dark theme, table layout, metric cards, slide-in detail panel
+ * v7.1.0 - Phase 3C: Alerts badge, dropdown panel, per-order alerts, resolve/dismiss
  * 
  * Orchestrates:
  * - Login/auth
@@ -8,19 +8,20 @@
  * - Metric cards (clickable filters)
  * - Table layout with sortable columns
  * - Slide-in detail panel with AI Summary
+ * - Alerts system (header badge + dropdown + per-order)
  * - Shipping Manager, Email Panel
- * - Brain Chat (header button, Task 3)
+ * - Brain Chat (header button)
  * - Sandbox/Live environment toggle
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import ShippingManager from './components/ShippingManager'
 import EmailPanel from './components/EmailPanel'
 import BrainChat from './components/BrainChat'
 
 import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL } from './config'
 
-// ─── STATUS CONFIG ───────────────────────────────────────────────────────────
+// ─── STATUS CONFIG ───────────────────────────────────────────────────
 const STATUSES = [
   { key: 'needs_payment_link', label: 'Need Invoice', short: 'Invoice', badge: 'sb-invoice', card: 'mc-invoice' },
   { key: 'awaiting_payment',   label: 'Awaiting Pay', short: 'Pay',     badge: 'sb-pay',     card: 'mc-pay' },
@@ -33,9 +34,22 @@ const STATUSES = [
 
 const STATUS_MAP = Object.fromEntries(STATUSES.map(s => [s.key, s]))
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
+// ─── ALERT TYPE LABELS ──────────────────────────────────────────────
+const ALERT_LABELS = {
+  needs_invoice: { label: 'Needs Invoice', icon: '📋' },
+  awaiting_payment_long: { label: 'Awaiting Payment', icon: '💰' },
+  needs_warehouse_order: { label: 'Needs Warehouse Order', icon: '🏭' },
+  at_warehouse_long: { label: 'At Warehouse Too Long', icon: '⏳' },
+  needs_bol: { label: 'Needs BOL', icon: '📄' },
+  ready_ship_long: { label: 'Ready to Ship Too Long', icon: '🚛' },
+  tracking_not_sent: { label: 'Tracking Not Sent', icon: '📬' },
+  delivery_confirm_needed: { label: 'Needs Delivery Confirm', icon: '✅' },
+}
+
+// ─── HELPERS ─────────────────────────────────────────────────────────
 const fmtMoney = (v) => '$' + parseFloat(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'
+const fmtDateTime = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
 
 const formatAddress = (o) => {
   const parts = []
@@ -48,7 +62,7 @@ const formatAddress = (o) => {
   return parts.join(', ')
 }
 
-// ─── APP ─────────────────────────────────────────────────────────────────────
+// ─── APP ─────────────────────────────────────────────────────────────
 function App() {
   // Auth
   const [isLoggedIn, setIsLoggedIn] = useState(false)
@@ -72,6 +86,15 @@ function App() {
   const [comprehensiveSummary, setComprehensiveSummary] = useState('')
   const [summaryLoading, setSummaryLoading] = useState(false)
 
+  // Alerts
+  const [alertSummary, setAlertSummary] = useState({ total_unresolved: 0, by_type: {} })
+  const [allAlerts, setAllAlerts] = useState([])
+  const [alertsOpen, setAlertsOpen] = useState(false)
+  const [alertsLoading, setAlertsLoading] = useState(false)
+  const [orderAlerts, setOrderAlerts] = useState([])
+  const [checkingAlerts, setCheckingAlerts] = useState(false)
+  const alertsRef = useRef(null)
+
   // Modals
   const [shippingModal, setShippingModal] = useState(null)
   const [emailOrder, setEmailOrder] = useState(null)
@@ -79,12 +102,12 @@ function App() {
   // Brain Chat
   const [brainOpen, setBrainOpen] = useState(false)
 
-  // ─── AUTH ────────────────────────────────────────────────────────────────
+  // ─── AUTH ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (localStorage.getItem('cfc_logged_in') === 'true') setIsLoggedIn(true)
   }, [])
 
-  useEffect(() => { if (isLoggedIn) loadOrders() }, [isLoggedIn])
+  useEffect(() => { if (isLoggedIn) { loadOrders(); loadAlertSummary() } }, [isLoggedIn])
 
   const handleLogin = (e) => {
     e.preventDefault()
@@ -102,7 +125,7 @@ function App() {
     localStorage.removeItem('cfc_logged_in')
   }
 
-  // ─── DATA ───────────────────────────────────────────────────────────────
+  // ─── DATA ─────────────────────────────────────────────────────────
   const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
@@ -115,7 +138,93 @@ function App() {
     setLoading(false)
   }, [])
 
-  // ─── METRICS ────────────────────────────────────────────────────────────
+  // ─── ALERTS ───────────────────────────────────────────────────────
+  const loadAlertSummary = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/alerts/summary`)
+      const data = await res.json()
+      if (data.success) {
+        setAlertSummary({ total_unresolved: data.total_unresolved, by_type: data.by_type })
+      }
+    } catch (err) {
+      console.error('Failed to load alert summary:', err)
+    }
+  }, [])
+
+  const loadAllAlerts = useCallback(async () => {
+    setAlertsLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/alerts/`)
+      const data = await res.json()
+      if (data.success) setAllAlerts(data.alerts || [])
+    } catch (err) {
+      console.error('Failed to load alerts:', err)
+    }
+    setAlertsLoading(false)
+  }, [])
+
+  const loadOrderAlerts = useCallback(async (orderId) => {
+    try {
+      const res = await fetch(`${API_URL}/alerts/?order_id=${orderId}`)
+      const data = await res.json()
+      if (data.success) setOrderAlerts(data.alerts || [])
+    } catch (err) {
+      console.error('Failed to load order alerts:', err)
+      setOrderAlerts([])
+    }
+  }, [])
+
+  const resolveAlert = async (alertId) => {
+    try {
+      const res = await fetch(`${API_URL}/alerts/${alertId}/resolve`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        // Refresh both lists
+        loadAllAlerts()
+        loadAlertSummary()
+        if (selectedOrder) loadOrderAlerts(selectedOrder.order_id)
+      }
+    } catch (err) {
+      console.error('Failed to resolve alert:', err)
+    }
+  }
+
+  const runAlertCheck = async () => {
+    setCheckingAlerts(true)
+    try {
+      const res = await fetch(`${API_URL}/alerts/check-all`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        // Refresh after check
+        loadAllAlerts()
+        loadAlertSummary()
+      }
+    } catch (err) {
+      console.error('Failed to run alert check:', err)
+    }
+    setCheckingAlerts(false)
+  }
+
+  // Toggle alerts dropdown
+  const toggleAlerts = () => {
+    if (!alertsOpen) {
+      loadAllAlerts()
+    }
+    setAlertsOpen(v => !v)
+  }
+
+  // Close alerts dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (alertsRef.current && !alertsRef.current.contains(e.target)) {
+        setAlertsOpen(false)
+      }
+    }
+    if (alertsOpen) document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [alertsOpen])
+
+  // ─── METRICS ──────────────────────────────────────────────────────
   const counts = useMemo(() => {
     const c = {}
     STATUSES.forEach(s => { c[s.key] = 0 })
@@ -123,7 +232,7 @@ function App() {
     return c
   }, [orders])
 
-  // ─── FILTERING + SORTING ────────────────────────────────────────────────
+  // ─── FILTERING + SORTING ──────────────────────────────────────────
   const filteredOrders = useMemo(() => {
     let list = orders
 
@@ -186,19 +295,21 @@ function App() {
     }
   }
 
-  // ─── DETAIL PANEL ──────────────────────────────────────────────────────
+  // ─── DETAIL PANEL ─────────────────────────────────────────────────
   const openDetail = (order) => {
     setSelectedOrder(order)
     setPanelTab('details')
     setComprehensiveSummary('')
+    loadOrderAlerts(order.order_id)
   }
 
   const closeDetail = () => {
     setSelectedOrder(null)
     setComprehensiveSummary('')
+    setOrderAlerts([])
   }
 
-  // ─── AI SUMMARY ─────────────────────────────────────────────────────────
+  // ─── AI SUMMARY ───────────────────────────────────────────────────
   const generateSummary = async () => {
     if (!selectedOrder) return
     setSummaryLoading(true)
@@ -213,7 +324,7 @@ function App() {
     setSummaryLoading(false)
   }
 
-  // ─── SHIPPING ───────────────────────────────────────────────────────────
+  // ─── SHIPPING ─────────────────────────────────────────────────────
   const openShippingManager = (shipment, order) => {
     setShippingModal({
       shipment,
@@ -232,10 +343,10 @@ function App() {
 
   const closeShippingManager = () => { setShippingModal(null); loadOrders() }
 
-  // ─── EMAIL ──────────────────────────────────────────────────────────────
+  // ─── EMAIL ────────────────────────────────────────────────────────
   const handleEmailSent = () => { setEmailOrder(null); loadOrders() }
 
-  // ─── STATUS UPDATE ──────────────────────────────────────────────────────
+  // ─── STATUS UPDATE ────────────────────────────────────────────────
   const updateStatus = async (orderId, value) => {
     try {
       await fetch(`${API_URL}/orders/${orderId}`, {
@@ -249,7 +360,7 @@ function App() {
     }
   }
 
-  // ─── RENDER: LOGIN ──────────────────────────────────────────────────────
+  // ─── RENDER: LOGIN ────────────────────────────────────────────────
   if (!isLoggedIn) {
     return (
       <div className="login-container">
@@ -273,8 +384,19 @@ function App() {
 
   const activeCount = orders.filter(o => o.current_status !== 'complete').length
   const completeCount = counts.complete
+  const totalAlerts = alertSummary.total_unresolved || 0
 
-  // ─── RENDER: MAIN ───────────────────────────────────────────────────────
+  // Group alerts by type for dropdown
+  const alertsByType = useMemo(() => {
+    const grouped = {}
+    allAlerts.forEach(a => {
+      if (!grouped[a.alert_type]) grouped[a.alert_type] = []
+      grouped[a.alert_type].push(a)
+    })
+    return grouped
+  }, [allAlerts])
+
+  // ─── RENDER: MAIN ─────────────────────────────────────────────────
   return (
     <div className="app">
       {/* ═══ HEADER ═══ */}
@@ -292,7 +414,88 @@ function App() {
               value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
             />
           </div>
-          {/* Brain Chat toggle - LEFT of Open Live */}
+
+          {/* ─── ALERTS BELL ─── */}
+          <div className="alerts-trigger-wrap" ref={alertsRef}>
+            <button
+              onClick={toggleAlerts}
+              className={`alerts-bell-btn${totalAlerts > 0 ? ' has-alerts' : ''}${alertsOpen ? ' active' : ''}`}
+              title={`${totalAlerts} unresolved alerts`}
+            >
+              &#x1F514;
+              {totalAlerts > 0 && <span className="alerts-badge-count">{totalAlerts}</span>}
+            </button>
+
+            {/* ─── ALERTS DROPDOWN ─── */}
+            {alertsOpen && (
+              <div className="alerts-dropdown">
+                <div className="alerts-dropdown-header">
+                  <div className="alerts-dropdown-title">
+                    <span style={{ fontSize: '16px' }}>&#x26A0;&#xFE0F;</span>
+                    <span>{totalAlerts} Unresolved Alert{totalAlerts !== 1 ? 's' : ''}</span>
+                  </div>
+                  <button
+                    className="btn btn-sm btn-primary"
+                    onClick={runAlertCheck}
+                    disabled={checkingAlerts}
+                  >
+                    {checkingAlerts ? '⟳ Checking...' : '⟳ Run Check'}
+                  </button>
+                </div>
+
+                <div className="alerts-dropdown-body">
+                  {alertsLoading ? (
+                    <div className="alerts-loading">Loading alerts...</div>
+                  ) : allAlerts.length === 0 ? (
+                    <div className="alerts-empty">
+                      <span style={{ fontSize: '24px' }}>&#x2705;</span>
+                      <span>All clear — no unresolved alerts</span>
+                    </div>
+                  ) : (
+                    Object.entries(alertsByType).map(([type, alerts]) => {
+                      const meta = ALERT_LABELS[type] || { label: type, icon: '⚠️' }
+                      return (
+                        <div key={type} className="alerts-group">
+                          <div className="alerts-group-header">
+                            <span>{meta.icon}</span>
+                            <span className="alerts-group-label">{meta.label}</span>
+                            <span className="alerts-group-count">{alerts.length}</span>
+                          </div>
+                          {alerts.map(alert => (
+                            <div key={alert.id} className="alert-row">
+                              <div className="alert-row-info">
+                                <span
+                                  className="alert-order-link"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    const order = orders.find(o => o.order_id === alert.order_id)
+                                    if (order) { openDetail(order); setAlertsOpen(false) }
+                                  }}
+                                >
+                                  #{alert.order_id}
+                                </span>
+                                <span className="alert-message">{alert.alert_message}</span>
+                                <span className="alert-time">{fmtDateTime(alert.created_at)}</span>
+                              </div>
+                              <button
+                                className="alert-resolve-btn"
+                                onClick={(e) => { e.stopPropagation(); resolveAlert(alert.id) }}
+                                title="Resolve this alert"
+                              >
+                                &#x2713;
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Brain Chat toggle */}
           <button onClick={() => setBrainOpen(v => !v)} title="Brain Chat"
             style={{
               background: brainOpen ? 'rgba(124,58,237,0.2)' : undefined,
@@ -312,7 +515,7 @@ function App() {
           >
             {IS_SANDBOX ? '\u{1F7E2} Open Live' : '\u{1F9EA} Open Sandbox'}
           </button>
-          <button onClick={loadOrders} disabled={loading}>
+          <button onClick={() => { loadOrders(); loadAlertSummary() }} disabled={loading}>
             {loading ? '...' : '\u{21BB} Refresh'}
           </button>
           <button onClick={handleLogout}>Logout</button>
@@ -442,6 +645,34 @@ function App() {
                 {/* ── DETAILS TAB ── */}
                 {panelTab === 'details' && (
                   <>
+                    {/* ── PER-ORDER ALERTS ── */}
+                    {orderAlerts.length > 0 && (
+                      <div className="detail-section order-alerts-section">
+                        <h4>&#x26A0;&#xFE0F; Active Alerts ({orderAlerts.length})</h4>
+                        {orderAlerts.map(alert => {
+                          const meta = ALERT_LABELS[alert.alert_type] || { label: alert.alert_type, icon: '⚠️' }
+                          return (
+                            <div key={alert.id} className="order-alert-card">
+                              <div className="order-alert-info">
+                                <div className="order-alert-type">
+                                  <span>{meta.icon}</span>
+                                  <span>{meta.label}</span>
+                                </div>
+                                <div className="order-alert-msg">{alert.alert_message}</div>
+                                <div className="order-alert-time">{fmtDateTime(alert.created_at)}</div>
+                              </div>
+                              <button
+                                className="btn btn-sm alert-resolve-inline"
+                                onClick={() => resolveAlert(alert.id)}
+                              >
+                                &#x2713; Resolve
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+
                     <div className="detail-section">
                       <h4>Customer</h4>
                       <div className="detail-row">
@@ -591,6 +822,13 @@ function App() {
                           &#x1F69A; Shipping Manager
                         </button>
                       )}
+                      <button className="btn" onClick={() => {
+                        fetch(`${API_URL}/alerts/check/${selectedOrder.order_id}`, { method: 'POST' })
+                          .then(r => r.json())
+                          .then(() => { loadOrderAlerts(selectedOrder.order_id); loadAlertSummary() })
+                      }}>
+                        &#x1F514; Check Alerts
+                      </button>
                       <button className="btn btn-danger" onClick={() => {
                         if (confirm('Archive this order?')) updateStatus(selectedOrder.order_id, 'complete')
                       }}>
