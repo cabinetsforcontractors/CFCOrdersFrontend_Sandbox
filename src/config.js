@@ -21,7 +21,7 @@ export const IS_SANDBOX = true
 // When IS_SANDBOX=true, this points to production frontend
 // When IS_SANDBOX=false, this points to sandbox frontend
 export const OTHER_ENV_URL = IS_SANDBOX
-  ? 'https://cfcordersfrontend.vercel.app'
+  ? 'https://cfc-orders-frontend.vercel.app'
   : 'https://cfcordersfrontend-sandbox.vercel.app'
 
 export const OTHER_ENV_LABEL = IS_SANDBOX ? 'Live' : 'Sandbox'
