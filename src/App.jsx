@@ -1,6 +1,13 @@
 /**
  * App.jsx - CFC Orders Dashboard
- * v7.1.1 - Fix: Move alertsByType useMemo before early returns (Rules of Hooks)
+ * v7.2.0 - Add All/Inactive tabs with lifecycle_status filtering
+ * 
+ * Tab layout (left to right):
+ *   All | Inactive | Invoice | Pay | Order | Warehouse | BOL | Ship | Done
+ * 
+ * "All" = all orders NOT in Done tab (active + inactive lifecycle)
+ * "Inactive" = orders with lifecycle_status === 'inactive' (7+ days no customer email)
+ * "Done" = complete orders (includes canceled with indicator)
  * 
  * Orchestrates:
  * - Login/auth
@@ -21,7 +28,7 @@ import BrainChat from './components/BrainChat'
 
 import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL } from './config'
 
-// ─── STATUS CONFIG ───────────────────────────────────────────
+// ─── STATUS CONFIG ───────────────────────────────────────
 const STATUSES = [
   { key: 'needs_payment_link', label: 'Need Invoice', short: 'Invoice', badge: 'sb-invoice', card: 'mc-invoice' },
   { key: 'awaiting_payment',   label: 'Awaiting Pay', short: 'Pay',     badge: 'sb-pay',     card: 'mc-pay' },
@@ -34,22 +41,25 @@ const STATUSES = [
 
 const STATUS_MAP = Object.fromEntries(STATUSES.map(s => [s.key, s]))
 
-// ─── ALERT TYPE LABELS ──────────────────────────────────────
+// Active statuses (everything except complete)
+const ACTIVE_STATUS_KEYS = STATUSES.filter(s => s.key !== 'complete').map(s => s.key)
+
+// ─── ALERT TYPE LABELS ──────────────────────────────────
 const ALERT_LABELS = {
-  needs_invoice: { label: 'Needs Invoice', icon: '📋' },
-  awaiting_payment_long: { label: 'Awaiting Payment', icon: '💰' },
-  needs_warehouse_order: { label: 'Needs Warehouse Order', icon: '🏭' },
-  at_warehouse_long: { label: 'At Warehouse Too Long', icon: '⏳' },
-  needs_bol: { label: 'Needs BOL', icon: '📄' },
-  ready_ship_long: { label: 'Ready to Ship Too Long', icon: '🚛' },
-  tracking_not_sent: { label: 'Tracking Not Sent', icon: '📬' },
-  delivery_confirm_needed: { label: 'Needs Delivery Confirm', icon: '✅' },
+  needs_invoice: { label: 'Needs Invoice', icon: '\ud83d\udccb' },
+  awaiting_payment_long: { label: 'Awaiting Payment', icon: '\ud83d\udcb0' },
+  needs_warehouse_order: { label: 'Needs Warehouse Order', icon: '\ud83c\udfed' },
+  at_warehouse_long: { label: 'At Warehouse Too Long', icon: '\u23f3' },
+  needs_bol: { label: 'Needs BOL', icon: '\ud83d\udcc4' },
+  ready_ship_long: { label: 'Ready to Ship Too Long', icon: '\ud83d\ude9b' },
+  tracking_not_sent: { label: 'Tracking Not Sent', icon: '\ud83d\udcec' },
+  delivery_confirm_needed: { label: 'Needs Delivery Confirm', icon: '\u2705' },
 }
 
-// ─── HELPERS ─────────────────────────────────────────────────
+// ─── HELPERS ─────────────────────────────────────────────
 const fmtMoney = (v) => '$' + parseFloat(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'
-const fmtDateTime = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '\u2014'
+const fmtDateTime = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '\u2014'
 
 const formatAddress = (o) => {
   const parts = []
@@ -62,7 +72,7 @@ const formatAddress = (o) => {
   return parts.join(', ')
 }
 
-// ─── APP ─────────────────────────────────────────────────────
+// ─── APP ─────────────────────────────────────────────────
 function App() {
   // Auth
   const [isLoggedIn, setIsLoggedIn] = useState(false)
@@ -73,12 +83,15 @@ function App() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
 
-  // Filters
+  // Filters — activeTab: 'all' | 'inactive' | 'done'
+  const [activeTab, setActiveTab] = useState('all')
   const [statusFilter, setStatusFilter] = useState(null)
-  const [showComplete, setShowComplete] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [sortCol, setSortCol] = useState('order_date')
   const [sortDir, setSortDir] = useState('desc')
+
+  // Lifecycle summary from backend
+  const [lifecycleSummary, setLifecycleSummary] = useState({ active: 0, inactive: 0, canceled: 0, total: 0 })
 
   // Detail panel
   const [selectedOrder, setSelectedOrder] = useState(null)
@@ -102,12 +115,12 @@ function App() {
   // Brain Chat
   const [brainOpen, setBrainOpen] = useState(false)
 
-  // ─── AUTH ──────────────────────────────────────────────────
+  // ─── AUTH ──────────────────────────────────────────────
   useEffect(() => {
     if (localStorage.getItem('cfc_logged_in') === 'true') setIsLoggedIn(true)
   }, [])
 
-  useEffect(() => { if (isLoggedIn) { loadOrders(); loadAlertSummary() } }, [isLoggedIn])
+  useEffect(() => { if (isLoggedIn) { loadOrders(); loadAlertSummary(); loadLifecycleSummary() } }, [isLoggedIn])
 
   const handleLogin = (e) => {
     e.preventDefault()
@@ -125,7 +138,7 @@ function App() {
     localStorage.removeItem('cfc_logged_in')
   }
 
-  // ─── DATA ─────────────────────────────────────────────────
+  // ─── DATA ──────────────────────────────────────────────
   const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
@@ -138,7 +151,26 @@ function App() {
     setLoading(false)
   }, [])
 
-  // ─── ALERTS ───────────────────────────────────────────────
+  // ─── LIFECYCLE SUMMARY ────────────────────────────────
+  const loadLifecycleSummary = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/lifecycle/summary`)
+      const data = await res.json()
+      if (data.success !== false) {
+        setLifecycleSummary({
+          active: data.active || 0,
+          inactive: data.inactive || 0,
+          canceled: data.canceled || 0,
+          total: data.total || 0,
+        })
+      }
+    } catch (err) {
+      // Lifecycle endpoint may not exist yet — gracefully degrade
+      console.log('Lifecycle summary not available:', err.message)
+    }
+  }, [])
+
+  // ─── ALERTS ───────────────────────────────────────────
   const loadAlertSummary = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/alerts/summary`)
@@ -179,7 +211,6 @@ function App() {
       const res = await fetch(`${API_URL}/alerts/${alertId}/resolve`, { method: 'POST' })
       const data = await res.json()
       if (data.success) {
-        // Refresh both lists
         loadAllAlerts()
         loadAlertSummary()
         if (selectedOrder) loadOrderAlerts(selectedOrder.order_id)
@@ -195,7 +226,6 @@ function App() {
       const res = await fetch(`${API_URL}/alerts/check-all`, { method: 'POST' })
       const data = await res.json()
       if (data.success) {
-        // Refresh after check
         loadAllAlerts()
         loadAlertSummary()
       }
@@ -205,15 +235,11 @@ function App() {
     setCheckingAlerts(false)
   }
 
-  // Toggle alerts dropdown
   const toggleAlerts = () => {
-    if (!alertsOpen) {
-      loadAllAlerts()
-    }
+    if (!alertsOpen) loadAllAlerts()
     setAlertsOpen(v => !v)
   }
 
-  // Close alerts dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (alertsRef.current && !alertsRef.current.contains(e.target)) {
@@ -224,7 +250,7 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [alertsOpen])
 
-  // ─── METRICS ──────────────────────────────────────────────
+  // ─── METRICS ──────────────────────────────────────────
   const counts = useMemo(() => {
     const c = {}
     STATUSES.forEach(s => { c[s.key] = 0 })
@@ -232,18 +258,44 @@ function App() {
     return c
   }, [orders])
 
-  // ─── FILTERING + SORTING ──────────────────────────────────
+  // ─── LIFECYCLE COUNTS (from loaded orders) ────────────
+  const lifecycleCounts = useMemo(() => {
+    let allActive = 0    // not complete, not inactive lifecycle
+    let inactive = 0     // lifecycle_status === 'inactive'
+    let done = 0         // complete (includes canceled)
+    let canceledInDone = 0
+
+    orders.forEach(o => {
+      if (o.current_status === 'complete') {
+        done++
+        if (o.lifecycle_status === 'canceled') canceledInDone++
+      } else if (o.lifecycle_status === 'inactive') {
+        inactive++
+      } else {
+        allActive++
+      }
+    })
+
+    return { allActive, inactive, done, canceledInDone, allNonDone: allActive + inactive }
+  }, [orders])
+
+  // ─── FILTERING + SORTING ──────────────────────────────
   const filteredOrders = useMemo(() => {
     let list = orders
 
-    // Tab: active vs complete
-    if (showComplete) {
+    // Tab filtering
+    if (activeTab === 'done') {
+      // Done tab: only complete orders
       list = list.filter(o => o.current_status === 'complete')
+    } else if (activeTab === 'inactive') {
+      // Inactive tab: non-complete orders with lifecycle_status === 'inactive'
+      list = list.filter(o => o.current_status !== 'complete' && o.lifecycle_status === 'inactive')
     } else {
+      // "All" tab: all non-complete orders (both active and inactive lifecycle)
       list = list.filter(o => o.current_status !== 'complete')
     }
 
-    // Metric card filter
+    // Status filter (from metric cards) — only applies within current tab
     if (statusFilter) {
       list = list.filter(o => o.current_status === statusFilter)
     }
@@ -274,7 +326,7 @@ function App() {
     })
 
     return list
-  }, [orders, showComplete, statusFilter, searchQuery, sortCol, sortDir])
+  }, [orders, activeTab, statusFilter, searchQuery, sortCol, sortDir])
 
   // Group alerts by type for dropdown (must be before early returns - Rules of Hooks)
   const alertsByType = useMemo(() => {
@@ -297,15 +349,20 @@ function App() {
 
   const handleMetricClick = (key) => {
     if (key === 'complete') {
-      setShowComplete(true)
+      setActiveTab('done')
       setStatusFilter(null)
     } else {
-      setShowComplete(false)
+      if (activeTab === 'done') setActiveTab('all')
       setStatusFilter(statusFilter === key ? null : key)
     }
   }
 
-  // ─── DETAIL PANEL ─────────────────────────────────────────
+  const handleTabClick = (tab) => {
+    setActiveTab(tab)
+    setStatusFilter(null)
+  }
+
+  // ─── DETAIL PANEL ─────────────────────────────────────
   const openDetail = (order) => {
     setSelectedOrder(order)
     setPanelTab('details')
@@ -319,7 +376,7 @@ function App() {
     setOrderAlerts([])
   }
 
-  // ─── AI SUMMARY ───────────────────────────────────────────
+  // ─── AI SUMMARY ───────────────────────────────────────
   const generateSummary = async () => {
     if (!selectedOrder) return
     setSummaryLoading(true)
@@ -334,7 +391,7 @@ function App() {
     setSummaryLoading(false)
   }
 
-  // ─── SHIPPING ─────────────────────────────────────────────
+  // ─── SHIPPING ─────────────────────────────────────────
   const openShippingManager = (shipment, order) => {
     setShippingModal({
       shipment,
@@ -353,10 +410,10 @@ function App() {
 
   const closeShippingManager = () => { setShippingModal(null); loadOrders() }
 
-  // ─── EMAIL ────────────────────────────────────────────────
+  // ─── EMAIL ────────────────────────────────────────────
   const handleEmailSent = () => { setEmailOrder(null); loadOrders() }
 
-  // ─── STATUS UPDATE ────────────────────────────────────────
+  // ─── STATUS UPDATE ────────────────────────────────────
   const updateStatus = async (orderId, value) => {
     try {
       await fetch(`${API_URL}/orders/${orderId}`, {
@@ -370,7 +427,21 @@ function App() {
     }
   }
 
-  // ─── RENDER: LOGIN ────────────────────────────────────────
+  // ─── LIFECYCLE CHECK (manual trigger) ─────────────────
+  const runLifecycleCheck = async () => {
+    try {
+      const res = await fetch(`${API_URL}/lifecycle/check-all`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success !== false) {
+        loadOrders()
+        loadLifecycleSummary()
+      }
+    } catch (err) {
+      console.error('Lifecycle check failed:', err)
+    }
+  }
+
+  // ─── RENDER: LOGIN ────────────────────────────────────
   if (!isLoggedIn) {
     return (
       <div className="login-container">
@@ -392,11 +463,9 @@ function App() {
     return <div className="loading">Loading orders...</div>
   }
 
-  const activeCount = orders.filter(o => o.current_status !== 'complete').length
-  const completeCount = counts.complete
   const totalAlerts = alertSummary.total_unresolved || 0
 
-  // ─── RENDER: MAIN ─────────────────────────────────────────
+  // ─── RENDER: MAIN ─────────────────────────────────────
   return (
     <div className="app">
       {/* ═══ HEADER ═══ */}
@@ -439,7 +508,7 @@ function App() {
                     onClick={runAlertCheck}
                     disabled={checkingAlerts}
                   >
-                    {checkingAlerts ? '⟳ Checking...' : '⟳ Run Check'}
+                    {checkingAlerts ? '\u27f3 Checking...' : '\u27f3 Run Check'}
                   </button>
                 </div>
 
@@ -453,7 +522,7 @@ function App() {
                     </div>
                   ) : (
                     Object.entries(alertsByType).map(([type, alerts]) => {
-                      const meta = ALERT_LABELS[type] || { label: type, icon: '⚠️' }
+                      const meta = ALERT_LABELS[type] || { label: type, icon: '\u26a0\ufe0f' }
                       return (
                         <div key={type} className="alerts-group">
                           <div className="alerts-group-header">
@@ -515,7 +584,7 @@ function App() {
           >
             {IS_SANDBOX ? '\u{1F7E2} Open Live' : '\u{1F9EA} Open Sandbox'}
           </button>
-          <button onClick={() => { loadOrders(); loadAlertSummary() }} disabled={loading}>
+          <button onClick={() => { loadOrders(); loadAlertSummary(); loadLifecycleSummary() }} disabled={loading}>
             {loading ? '...' : '\u{21BB} Refresh'}
           </button>
           <button onClick={handleLogout}>Logout</button>
@@ -524,14 +593,14 @@ function App() {
 
       {/* ═══ MAIN CONTENT ═══ */}
       <div className="main-content">
-        <div className="content-area">
+        <div className={`content-area${selectedOrder ? ' panel-open' : ''}`}>
 
           {/* ─── METRIC CARDS ─── */}
           <div className="metrics-row">
             {STATUSES.map(s => (
               <div
                 key={s.key}
-                className={`metric-card ${s.card}${statusFilter === s.key || (s.key === 'complete' && showComplete) ? ' active' : ''}`}
+                className={`metric-card ${s.card}${statusFilter === s.key || (s.key === 'complete' && activeTab === 'done') ? ' active' : ''}`}
                 onClick={() => handleMetricClick(s.key)}
               >
                 <div className="metric-count">{counts[s.key]}</div>
@@ -543,19 +612,74 @@ function App() {
           {/* ─── TABS ROW ─── */}
           <div className="tabs-row">
             <div className="tabs">
+              {/* ALL — far left */}
               <button
-                className={`tab-btn${!showComplete ? ' active' : ''}`}
-                onClick={() => { setShowComplete(false); setStatusFilter(null) }}
+                className={`tab-btn${activeTab === 'all' && !statusFilter ? ' active' : ''}`}
+                onClick={() => handleTabClick('all')}
+                title="All active orders (excludes Done)"
               >
-                Active <span className="tab-count">{activeCount}</span>
+                All <span className="tab-count">{lifecycleCounts.allNonDone}</span>
               </button>
+
+              {/* INACTIVE — between All and status filters */}
               <button
-                className={`tab-btn${showComplete ? ' active' : ''}`}
-                onClick={() => { setShowComplete(true); setStatusFilter(null) }}
+                className={`tab-btn tab-inactive${activeTab === 'inactive' ? ' active' : ''}`}
+                onClick={() => handleTabClick('inactive')}
+                title="Orders with no customer email for 7+ days"
+                style={activeTab === 'inactive' ? {
+                  backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                  borderColor: '#f59e0b',
+                  color: '#f59e0b',
+                } : {
+                  borderColor: 'rgba(245, 158, 11, 0.3)',
+                  color: '#f59e0b',
+                }}
               >
-                Complete <span className="tab-count">{completeCount}</span>
+                Inactive <span className="tab-count">{lifecycleCounts.inactive}</span>
+              </button>
+
+              {/* Separator */}
+              <span style={{ width: '1px', height: '24px', background: 'var(--border)', margin: '0 4px' }} />
+
+              {/* Status filter buttons — Invoice through Ship */}
+              {ACTIVE_STATUS_KEYS.map(key => {
+                const s = STATUS_MAP[key]
+                const isActive = statusFilter === key
+                return (
+                  <button
+                    key={key}
+                    className={`tab-btn${isActive ? ' active' : ''}`}
+                    onClick={() => {
+                      if (activeTab === 'done') setActiveTab('all')
+                      setStatusFilter(isActive ? null : key)
+                    }}
+                    style={isActive ? {
+                      backgroundColor: `var(--status-${s.badge}-bg, rgba(255,255,255,0.1))`,
+                    } : {}}
+                  >
+                    {s.short} <span className="tab-count">{counts[key]}</span>
+                  </button>
+                )
+              })}
+
+              {/* Separator */}
+              <span style={{ width: '1px', height: '24px', background: 'var(--border)', margin: '0 4px' }} />
+
+              {/* DONE — far right */}
+              <button
+                className={`tab-btn tab-done${activeTab === 'done' ? ' active' : ''}`}
+                onClick={() => handleTabClick('done')}
+                title="Completed and canceled orders"
+                style={activeTab === 'done' ? {
+                  backgroundColor: 'rgba(158, 158, 158, 0.15)',
+                  borderColor: '#9e9e9e',
+                  color: '#9e9e9e',
+                } : {}}
+              >
+                Done <span className="tab-count">{lifecycleCounts.done}</span>
               </button>
             </div>
+
             <div className="tab-actions">
               {statusFilter && (
                 <button className="btn btn-sm" onClick={() => setStatusFilter(null)}>
@@ -587,18 +711,24 @@ function App() {
                   const days = parseInt(order.days_open || 0)
                   const ageClass = days > 14 ? 'age-danger' : days > 7 ? 'age-warn' : ''
                   const isSelected = selectedOrder?.order_id === order.order_id
+                  const isCanceled = order.lifecycle_status === 'canceled'
+                  const isInactive = order.lifecycle_status === 'inactive'
 
                   // Extract first warehouse from shipments
                   const wh = order.shipments?.[0]?.warehouse || ''
 
                   return (
                     <tr key={order.order_id}
-                      className={isSelected ? 'row-selected' : ''}
+                      className={`${isSelected ? 'row-selected' : ''}${isCanceled ? ' row-canceled' : ''}${isInactive ? ' row-inactive' : ''}`}
                       onClick={() => openDetail(order)}
                     >
-                      <td><span className="order-id">#{order.order_id}</span></td>
                       <td>
-                        <div className="customer-name">{order.company_name || order.customer_name || '—'}</div>
+                        <span className="order-id">#{order.order_id}</span>
+                        {isCanceled && <span className="canceled-badge" title="Canceled">CANCELED</span>}
+                        {isInactive && activeTab !== 'inactive' && <span className="inactive-badge" title="Inactive 7+ days">INACTIVE</span>}
+                      </td>
+                      <td>
+                        <div className="customer-name">{order.company_name || order.customer_name || '\u2014'}</div>
                         {order.city && <div className="customer-company">{order.city}{order.state ? `, ${order.state}` : ''}</div>}
                       </td>
                       <td>
@@ -628,6 +758,12 @@ function App() {
                 <h3>
                   <span className="order-id">#{selectedOrder.order_id}</span>
                   <span className="amount" style={{ marginLeft: '8px' }}>{fmtMoney(selectedOrder.order_total)}</span>
+                  {selectedOrder.lifecycle_status === 'canceled' && (
+                    <span className="canceled-badge" style={{ marginLeft: '8px' }}>CANCELED</span>
+                  )}
+                  {selectedOrder.lifecycle_status === 'inactive' && (
+                    <span className="inactive-badge" style={{ marginLeft: '8px' }}>INACTIVE</span>
+                  )}
                 </h3>
                 <button className="panel-close" onClick={closeDetail}>{'\u00D7'}</button>
               </div>
@@ -650,7 +786,7 @@ function App() {
                       <div className="detail-section order-alerts-section">
                         <h4>&#x26A0;&#xFE0F; Active Alerts ({orderAlerts.length})</h4>
                         {orderAlerts.map(alert => {
-                          const meta = ALERT_LABELS[alert.alert_type] || { label: alert.alert_type, icon: '⚠️' }
+                          const meta = ALERT_LABELS[alert.alert_type] || { label: alert.alert_type, icon: '\u26a0\ufe0f' }
                           return (
                             <div key={alert.id} className="order-alert-card">
                               <div className="order-alert-info">
@@ -673,23 +809,52 @@ function App() {
                       </div>
                     )}
 
+                    {/* Lifecycle info (if inactive or canceled) */}
+                    {(selectedOrder.lifecycle_status === 'inactive' || selectedOrder.lifecycle_status === 'canceled') && (
+                      <div className="detail-section" style={{
+                        background: selectedOrder.lifecycle_status === 'canceled'
+                          ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
+                        border: `1px solid ${selectedOrder.lifecycle_status === 'canceled'
+                          ? 'rgba(239,68,68,0.3)' : 'rgba(245,158,11,0.3)'}`,
+                        borderRadius: '8px',
+                        padding: '12px',
+                      }}>
+                        <h4 style={{ color: selectedOrder.lifecycle_status === 'canceled' ? '#ef4444' : '#f59e0b', margin: '0 0 8px 0' }}>
+                          {selectedOrder.lifecycle_status === 'canceled' ? '\u274c Canceled' : '\u23f8\ufe0f Inactive'}
+                        </h4>
+                        {selectedOrder.lifecycle_deadline_at && (
+                          <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
+                            {selectedOrder.lifecycle_status === 'inactive'
+                              ? `Will be canceled: ${fmtDate(selectedOrder.lifecycle_deadline_at)}`
+                              : `Canceled at: ${fmtDate(selectedOrder.completed_at || selectedOrder.lifecycle_deadline_at)}`
+                            }
+                          </div>
+                        )}
+                        {selectedOrder.last_customer_email_at && (
+                          <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px' }}>
+                            Last customer email: {fmtDate(selectedOrder.last_customer_email_at)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     <div className="detail-section">
                       <h4>Customer</h4>
                       <div className="detail-row">
                         <span className="detail-label">Company</span>
-                        <span className="detail-value">{selectedOrder.company_name || selectedOrder.customer_name || '—'}</span>
+                        <span className="detail-value">{selectedOrder.company_name || selectedOrder.customer_name || '\u2014'}</span>
                       </div>
                       <div className="detail-row">
                         <span className="detail-label">Email</span>
-                        <span className="detail-value mono">{selectedOrder.email || '—'}</span>
+                        <span className="detail-value mono">{selectedOrder.email || '\u2014'}</span>
                       </div>
                       <div className="detail-row">
                         <span className="detail-label">Phone</span>
-                        <span className="detail-value mono">{selectedOrder.phone || '—'}</span>
+                        <span className="detail-value mono">{selectedOrder.phone || '\u2014'}</span>
                       </div>
                       <div className="detail-row">
                         <span className="detail-label">Address</span>
-                        <span className="detail-value">{formatAddress(selectedOrder) || '—'}</span>
+                        <span className="detail-value">{formatAddress(selectedOrder) || '\u2014'}</span>
                       </div>
                     </div>
 
@@ -829,6 +994,21 @@ function App() {
                       }}>
                         &#x1F514; Check Alerts
                       </button>
+                      {/* Reactivate button for inactive orders */}
+                      {selectedOrder.lifecycle_status === 'inactive' && (
+                        <button className="btn" style={{ borderColor: '#10b981', color: '#10b981' }}
+                          onClick={async () => {
+                            try {
+                              await fetch(`${API_URL}/lifecycle/extend/${selectedOrder.order_id}`, { method: 'POST' })
+                              loadOrders()
+                              loadLifecycleSummary()
+                              closeDetail()
+                            } catch (err) { console.error('Failed to reactivate:', err) }
+                          }}
+                        >
+                          &#x267B; Reactivate Order
+                        </button>
+                      )}
                       <button className="btn btn-danger" onClick={() => {
                         if (confirm('Archive this order?')) updateStatus(selectedOrder.order_id, 'complete')
                       }}>
@@ -843,7 +1023,7 @@ function App() {
         </div>
       </div>
 
-      {/* ═══ BRAIN CHAT (triggered from header, panel overlays) ═══ */}
+      {/* ═══ BRAIN CHAT ═══ */}
       <BrainChat isOpen={brainOpen} onClose={() => setBrainOpen(false)} />
 
       {/* ═══ EMAIL PANEL ═══ */}
