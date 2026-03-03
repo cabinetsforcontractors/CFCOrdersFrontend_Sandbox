@@ -1,6 +1,6 @@
 /**
  * App.jsx - CFC Orders Dashboard
- * v7.2.0 - Add All/Inactive tabs with lifecycle_status filtering
+ * v7.2.1 - Click-to-close detail panel from content area + stopPropagation on row clicks
  * 
  * Tab layout (left to right):
  *   All | Inactive | Invoice | Pay | Order | Warehouse | BOL | Ship | Done
@@ -441,6 +441,11 @@ function App() {
     }
   }
 
+  // ─── CONTENT AREA CLICK → CLOSE PANEL ─────────────────
+  const handleContentAreaClick = () => {
+    if (selectedOrder) closeDetail()
+  }
+
   // ─── RENDER: LOGIN ────────────────────────────────────
   if (!isLoggedIn) {
     return (
@@ -593,7 +598,10 @@ function App() {
 
       {/* ═══ MAIN CONTENT ═══ */}
       <div className="main-content">
-        <div className={`content-area${selectedOrder ? ' panel-open' : ''}`}>
+        <div
+          className={`content-area${selectedOrder ? ' panel-open' : ''}`}
+          onClick={handleContentAreaClick}
+        >
 
           {/* ─── METRIC CARDS ─── */}
           <div className="metrics-row">
@@ -720,7 +728,7 @@ function App() {
                   return (
                     <tr key={order.order_id}
                       className={`${isSelected ? 'row-selected' : ''}${isCanceled ? ' row-canceled' : ''}${isInactive ? ' row-inactive' : ''}`}
-                      onClick={() => openDetail(order)}
+                      onClick={(e) => { e.stopPropagation(); openDetail(order) }}
                     >
                       <td>
                         <span className="order-id">#{order.order_id}</span>
