@@ -1,6 +1,6 @@
 /**
  * App.jsx - CFC Orders Dashboard
- * v7.1.0 - Phase 3C: Alerts badge, dropdown panel, per-order alerts, resolve/dismiss
+ * v7.1.1 - Fix: Move alertsByType useMemo before early returns (Rules of Hooks)
  * 
  * Orchestrates:
  * - Login/auth
@@ -21,7 +21,7 @@ import BrainChat from './components/BrainChat'
 
 import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL } from './config'
 
-// ─── STATUS CONFIG ───────────────────────────────────────────────────
+// ─── STATUS CONFIG ───────────────────────────────────────────
 const STATUSES = [
   { key: 'needs_payment_link', label: 'Need Invoice', short: 'Invoice', badge: 'sb-invoice', card: 'mc-invoice' },
   { key: 'awaiting_payment',   label: 'Awaiting Pay', short: 'Pay',     badge: 'sb-pay',     card: 'mc-pay' },
@@ -34,7 +34,7 @@ const STATUSES = [
 
 const STATUS_MAP = Object.fromEntries(STATUSES.map(s => [s.key, s]))
 
-// ─── ALERT TYPE LABELS ──────────────────────────────────────────────
+// ─── ALERT TYPE LABELS ──────────────────────────────────────
 const ALERT_LABELS = {
   needs_invoice: { label: 'Needs Invoice', icon: '📋' },
   awaiting_payment_long: { label: 'Awaiting Payment', icon: '💰' },
@@ -46,7 +46,7 @@ const ALERT_LABELS = {
   delivery_confirm_needed: { label: 'Needs Delivery Confirm', icon: '✅' },
 }
 
-// ─── HELPERS ─────────────────────────────────────────────────────────
+// ─── HELPERS ─────────────────────────────────────────────────
 const fmtMoney = (v) => '$' + parseFloat(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'
 const fmtDateTime = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
@@ -62,7 +62,7 @@ const formatAddress = (o) => {
   return parts.join(', ')
 }
 
-// ─── APP ─────────────────────────────────────────────────────────────
+// ─── APP ─────────────────────────────────────────────────────
 function App() {
   // Auth
   const [isLoggedIn, setIsLoggedIn] = useState(false)
@@ -102,7 +102,7 @@ function App() {
   // Brain Chat
   const [brainOpen, setBrainOpen] = useState(false)
 
-  // ─── AUTH ──────────────────────────────────────────────────────────
+  // ─── AUTH ──────────────────────────────────────────────────
   useEffect(() => {
     if (localStorage.getItem('cfc_logged_in') === 'true') setIsLoggedIn(true)
   }, [])
@@ -125,7 +125,7 @@ function App() {
     localStorage.removeItem('cfc_logged_in')
   }
 
-  // ─── DATA ─────────────────────────────────────────────────────────
+  // ─── DATA ─────────────────────────────────────────────────
   const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
@@ -138,7 +138,7 @@ function App() {
     setLoading(false)
   }, [])
 
-  // ─── ALERTS ───────────────────────────────────────────────────────
+  // ─── ALERTS ───────────────────────────────────────────────
   const loadAlertSummary = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/alerts/summary`)
@@ -224,7 +224,7 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [alertsOpen])
 
-  // ─── METRICS ──────────────────────────────────────────────────────
+  // ─── METRICS ──────────────────────────────────────────────
   const counts = useMemo(() => {
     const c = {}
     STATUSES.forEach(s => { c[s.key] = 0 })
@@ -232,7 +232,7 @@ function App() {
     return c
   }, [orders])
 
-  // ─── FILTERING + SORTING ──────────────────────────────────────────
+  // ─── FILTERING + SORTING ──────────────────────────────────
   const filteredOrders = useMemo(() => {
     let list = orders
 
@@ -276,6 +276,16 @@ function App() {
     return list
   }, [orders, showComplete, statusFilter, searchQuery, sortCol, sortDir])
 
+  // Group alerts by type for dropdown (must be before early returns - Rules of Hooks)
+  const alertsByType = useMemo(() => {
+    const grouped = {}
+    allAlerts.forEach(a => {
+      if (!grouped[a.alert_type]) grouped[a.alert_type] = []
+      grouped[a.alert_type].push(a)
+    })
+    return grouped
+  }, [allAlerts])
+
   const handleSort = (col) => {
     if (sortCol === col) {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -295,7 +305,7 @@ function App() {
     }
   }
 
-  // ─── DETAIL PANEL ─────────────────────────────────────────────────
+  // ─── DETAIL PANEL ─────────────────────────────────────────
   const openDetail = (order) => {
     setSelectedOrder(order)
     setPanelTab('details')
@@ -309,7 +319,7 @@ function App() {
     setOrderAlerts([])
   }
 
-  // ─── AI SUMMARY ───────────────────────────────────────────────────
+  // ─── AI SUMMARY ───────────────────────────────────────────
   const generateSummary = async () => {
     if (!selectedOrder) return
     setSummaryLoading(true)
@@ -324,7 +334,7 @@ function App() {
     setSummaryLoading(false)
   }
 
-  // ─── SHIPPING ─────────────────────────────────────────────────────
+  // ─── SHIPPING ─────────────────────────────────────────────
   const openShippingManager = (shipment, order) => {
     setShippingModal({
       shipment,
@@ -343,10 +353,10 @@ function App() {
 
   const closeShippingManager = () => { setShippingModal(null); loadOrders() }
 
-  // ─── EMAIL ────────────────────────────────────────────────────────
+  // ─── EMAIL ────────────────────────────────────────────────
   const handleEmailSent = () => { setEmailOrder(null); loadOrders() }
 
-  // ─── STATUS UPDATE ────────────────────────────────────────────────
+  // ─── STATUS UPDATE ────────────────────────────────────────
   const updateStatus = async (orderId, value) => {
     try {
       await fetch(`${API_URL}/orders/${orderId}`, {
@@ -360,7 +370,7 @@ function App() {
     }
   }
 
-  // ─── RENDER: LOGIN ────────────────────────────────────────────────
+  // ─── RENDER: LOGIN ────────────────────────────────────────
   if (!isLoggedIn) {
     return (
       <div className="login-container">
@@ -386,17 +396,7 @@ function App() {
   const completeCount = counts.complete
   const totalAlerts = alertSummary.total_unresolved || 0
 
-  // Group alerts by type for dropdown
-  const alertsByType = useMemo(() => {
-    const grouped = {}
-    allAlerts.forEach(a => {
-      if (!grouped[a.alert_type]) grouped[a.alert_type] = []
-      grouped[a.alert_type].push(a)
-    })
-    return grouped
-  }, [allAlerts])
-
-  // ─── RENDER: MAIN ─────────────────────────────────────────────────
+  // ─── RENDER: MAIN ─────────────────────────────────────────
   return (
     <div className="app">
       {/* ═══ HEADER ═══ */}
