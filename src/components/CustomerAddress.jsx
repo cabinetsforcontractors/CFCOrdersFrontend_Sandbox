@@ -107,7 +107,7 @@ const BillToAddress = () => {
   
   return (
     <div className="address-section bill-to" style={{ backgroundColor: '#e3f2fd', borderRadius: '8px', padding: '12px', marginBottom: '12px' }}>
-      <h4 style={{ margin: '0 0 12px 0' }}>Bill To (Section 3 - Always Same)</h4>
+      <h4 style={{ margin: '0 0 12px 0', color: '#111' }}>Bill To (Section 3 - Always Same)</h4>
       <CopyButton label="Company" text={billTo.company} />
       <CopyButton label="Street" text={billTo.street} />
       <CopyButton label="City" text={billTo.city} />
