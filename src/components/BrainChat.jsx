@@ -1,13 +1,12 @@
 /**
  * BrainChat.jsx - Brain AI Chat Panel for CFC Orders
- * v2.0.0 - Header-triggered panel (no floating button)
+ * v2.1.0 - Header-triggered panel, hardcoded admin token
  *
  * Props:
  *   isOpen: boolean - controlled by parent (App.jsx header button)
  *   onClose: function - called to close panel
  *
  * Sends to Brain /ask endpoint with "orders" domain.
- * Token entered once and stored in component state.
  */
 
 import { useState, useRef, useEffect } from 'react'
@@ -18,8 +17,7 @@ export default function BrainChat({ isOpen, onClose }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [tokenInput, setTokenInput] = useState('')
-  const [token, setToken] = useState('')
+  const [token] = useState('CFC2025')
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
 
@@ -30,8 +28,6 @@ export default function BrainChat({ isOpen, onClose }) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
-
-  const saveToken = () => setToken(tokenInput)
 
   const sendMessage = async () => {
     if (!input.trim() || loading || !token) return
@@ -129,34 +125,6 @@ export default function BrainChat({ isOpen, onClose }) {
         </div>
       </div>
 
-      {/* Token setup */}
-      {!token && (
-        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
-          <div style={{ color: 'var(--text-dim)', fontSize: '12px', marginBottom: '8px' }}>
-            Enter your Brain admin token to connect:
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <input type="password" value={tokenInput}
-              onChange={e => setTokenInput(e.target.value)}
-              placeholder="Admin token..."
-              style={{
-                flex: 1, padding: '8px 10px', backgroundColor: 'var(--bg-input)',
-                border: '1px solid var(--border)', borderRadius: '6px',
-                color: 'var(--text)', fontSize: '13px', fontFamily: 'inherit', outline: 'none'
-              }}
-              onKeyDown={e => e.key === 'Enter' && saveToken()}
-            />
-            <button onClick={saveToken}
-              style={{
-                padding: '8px 14px', backgroundColor: 'var(--accent)', color: '#fff',
-                border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
-                fontFamily: 'inherit', fontWeight: '500'
-              }}
-            >Save</button>
-          </div>
-        </div>
-      )}
-
       {/* Messages */}
       <div style={{
         flex: 1, overflowY: 'auto', padding: '14px',
@@ -218,8 +186,8 @@ export default function BrainChat({ isOpen, onClose }) {
         <div style={{ display: 'flex', gap: '8px' }}>
           <input ref={inputRef} type="text" value={input}
             onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-            placeholder={token ? "Ask the Brain..." : "Set token first..."}
-            disabled={!token || loading}
+            placeholder="Ask the Brain..."
+            disabled={loading}
             style={{
               flex: 1, padding: '10px 14px', backgroundColor: 'var(--bg-input)',
               border: '1px solid var(--border)', borderRadius: '8px',
@@ -227,13 +195,13 @@ export default function BrainChat({ isOpen, onClose }) {
             }}
           />
           <button onClick={sendMessage}
-            disabled={!token || loading || !input.trim()}
+            disabled={loading || !input.trim()}
             style={{
               padding: '10px 16px',
-              backgroundColor: (!token || loading || !input.trim()) ? 'var(--bg-hover)' : 'var(--accent)',
-              color: (!token || loading || !input.trim()) ? 'var(--text-muted)' : '#fff',
+              backgroundColor: (loading || !input.trim()) ? 'var(--bg-hover)' : 'var(--accent)',
+              color: (loading || !input.trim()) ? 'var(--text-muted)' : '#fff',
               border: 'none', borderRadius: '8px',
-              cursor: (!token || loading || !input.trim()) ? 'not-allowed' : 'pointer',
+              cursor: (loading || !input.trim()) ? 'not-allowed' : 'pointer',
               fontSize: '14px', fontWeight: 'bold'
             }}
           >{'\u25B6'}</button>
