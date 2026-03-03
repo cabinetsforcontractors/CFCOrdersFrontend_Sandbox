@@ -227,9 +227,10 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
             backgroundColor: '#d4edda',
             border: '1px solid #28a745',
             borderRadius: '6px',
-            fontSize: '13px'
+            fontSize: '13px',
+            color: '#111'
           }}>
-            <strong>✅ Auto Quote Complete</strong>
+            <strong style={{ color: '#111' }}>✅ Auto Quote Complete</strong>
             <div style={{ marginTop: '6px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
               <span>Carrier Price:</span>
               <strong>${autoQuoteResult.carrier_price}</strong>
