@@ -1,13 +1,15 @@
 /**
  * EmailPanel.jsx
  * Phase 4: Email template picker + send + history view
- * 
+ * Phase 5C: replaced all fetch() with apiFetch() for X-Admin-Token injection
+ *
  * Usage in OrderCard or detail view:
  *   <EmailPanel orderId="5307" customerEmail="john@example.com" onClose={() => {}} />
  */
 
 import { useState, useEffect } from 'react'
 import { API_URL } from '../config'
+import { apiFetch } from '../api'
 
 const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
   const [templates, setTemplates] = useState([])
@@ -21,7 +23,6 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  // Load templates + history on mount
   useEffect(() => {
     loadTemplates()
     loadHistory()
@@ -29,7 +30,7 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
 
   const loadTemplates = async () => {
     try {
-      const res = await fetch(`${API_URL}/email/templates`)
+      const res = await apiFetch(`${API_URL}/email/templates`)
       const data = await res.json()
       if (data.success) {
         setTemplates(data.templates || [])
@@ -42,7 +43,7 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
   const loadHistory = async () => {
     try {
       setLoading(true)
-      const res = await fetch(`${API_URL}/orders/${orderId}/email-history`)
+      const res = await apiFetch(`${API_URL}/orders/${orderId}/email-history`)
       const data = await res.json()
       if (data.success) {
         setHistory(data.emails || [])
@@ -57,7 +58,7 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
   const handlePreview = async () => {
     if (!selectedTemplate) return
     try {
-      const res = await fetch(`${API_URL}/orders/${orderId}/preview-email`, {
+      const res = await apiFetch(`${API_URL}/orders/${orderId}/preview-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -90,7 +91,7 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
     setSending(true)
     setResult(null)
     try {
-      const res = await fetch(`${API_URL}/orders/${orderId}/send-email`, {
+      const res = await apiFetch(`${API_URL}/orders/${orderId}/send-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -113,7 +114,6 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
     }
   }
 
-  // Group templates by category
   const manualTemplates = templates.filter(t => t.category === 'manual')
   const lifecycleTemplates = templates.filter(t => t.category === 'lifecycle')
 
@@ -149,19 +149,16 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
         alignItems: 'center',
       }}>
         <div>
-          <div style={{ fontSize: '16px', fontWeight: 600 }}>Email — Order #{orderId}</div>
+          <div style={{ fontSize: '16px', fontWeight: 600 }}>Email \u2014 Order #{orderId}</div>
           <div style={{ fontSize: '12px', color: '#93c5fd' }}>{toEmail}</div>
         </div>
         <button onClick={onClose} style={{
           background: 'none', border: 'none', color: '#fff', fontSize: '20px', cursor: 'pointer'
-        }}>✕</button>
+        }}>\u2715</button>
       </div>
 
       {/* Tabs */}
-      <div style={{
-        display: 'flex',
-        borderBottom: '2px solid #e2e8f0',
-      }}>
+      <div style={{ display: 'flex', borderBottom: '2px solid #e2e8f0' }}>
         {['send', 'history'].map(tab => (
           <button
             key={tab}
@@ -178,7 +175,7 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
               color: activeTab === tab ? '#2563eb' : '#64748b',
             }}
           >
-            {tab === 'send' ? '📧 Send Email' : `📋 History (${history.length})`}
+            {tab === 'send' ? '\ud83d\udce7 Send Email' : `\ud83d\udccb History (${history.length})`}
           </button>
         ))}
       </div>
@@ -214,7 +211,6 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
                 Template:
               </label>
 
-              {/* Manual Templates */}
               <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px' }}>
                 Standard
               </div>
@@ -245,7 +241,6 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
                 </label>
               ))}
 
-              {/* Lifecycle Templates */}
               <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: '12px', marginBottom: '6px' }}>
                 Lifecycle (auto-send, won't reset clock)
               </div>
@@ -293,7 +288,7 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
                   color: selectedTemplate ? '#333' : '#94a3b8',
                 }}
               >
-                👁 Preview
+                \ud83d\udc41 Preview
               </button>
               <button
                 onClick={handleSend}
@@ -310,7 +305,7 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
                   fontWeight: 600,
                 }}
               >
-                {sending ? '⏳ Sending...' : '📤 Send Email'}
+                {sending ? '\u23f3 Sending...' : '\ud83d\udce4 Send Email'}
               </button>
             </div>
 
@@ -324,13 +319,13 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
                 marginBottom: '16px',
               }}>
                 <div style={{ fontWeight: 600, color: result.success ? '#166534' : '#991b1b' }}>
-                  {result.success ? '✅ Email Sent!' : '❌ Send Failed'}
+                  {result.success ? '\u2705 Email Sent!' : '\u274c Send Failed'}
                 </div>
                 {result.success && (
                   <div style={{ fontSize: '12px', color: '#166534', marginTop: '4px' }}>
-                    To: {result.to} — {result.subject}
+                    To: {result.to} \u2014 {result.subject}
                     {result.source_tag === 'system_generated' && (
-                      <span style={{ color: '#94a3b8' }}> (lifecycle — won't reset clock)</span>
+                      <span style={{ color: '#94a3b8' }}> (lifecycle \u2014 won't reset clock)</span>
                     )}
                   </div>
                 )}
@@ -376,7 +371,7 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
                     <span style={{ fontWeight: 600 }}>Email Preview</span>
                     <button onClick={() => setShowPreview(false)} style={{
                       background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer'
-                    }}>✕</button>
+                    }}>\u2715</button>
                   </div>
                   <div style={{ flex: 1, overflow: 'auto' }}>
                     <iframe
@@ -414,14 +409,14 @@ const EmailPanel = ({ orderId, customerEmail, onClose, onSent }) => {
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontWeight: 600, fontSize: '13px' }}>
-                        {isFailed ? '❌' : '✅'} {data.template_name || data.template_id || 'Email'}
+                        {isFailed ? '\u274c' : '\u2705'} {data.template_name || data.template_id || 'Email'}
                       </span>
                       <span style={{ fontSize: '12px', color: '#94a3b8' }}>
                         {formatDate(entry.created_at)}
                       </span>
                     </div>
                     <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
-                      To: {data.to_email || '—'}
+                      To: {data.to_email || '\u2014'}
                     </div>
                     <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
                       {data.subject || ''}
