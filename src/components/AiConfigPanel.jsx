@@ -2,11 +2,13 @@
  * AiConfigPanel.jsx
  * Floating AI configuration panel for sandbox.
  * Connie types natural language commands, Claude returns config changes.
- * 
+ *
  * Session 7 — Mar 2, 2026
+ * Phase 5C: replaced fetch() with apiFetch() for X-Admin-Token injection
  */
 
 import { useState, useRef, useEffect } from 'react'
+import { apiFetch } from '../api'
 
 // Default status colors (must match StatusBar / index.css)
 const DEFAULT_COLORS = {
@@ -28,14 +30,12 @@ export default function AiConfigPanel({ apiUrl, onConfigChange }) {
   const inputRef = useRef(null)
   const historyRef = useRef(null)
 
-  // Focus input when panel opens
   useEffect(() => {
     if (isOpen && inputRef.current) {
       inputRef.current.focus()
     }
   }, [isOpen])
 
-  // Scroll history to bottom on new entries
   useEffect(() => {
     if (historyRef.current) {
       historyRef.current.scrollTop = historyRef.current.scrollHeight
@@ -50,11 +50,10 @@ export default function AiConfigPanel({ apiUrl, onConfigChange }) {
     setError('')
     setLoading(true)
 
-    // Add user message to history
     setHistory(prev => [...prev, { role: 'user', text: userPrompt }])
 
     try {
-      const res = await fetch(`${apiUrl}/ai/configure`, {
+      const res = await apiFetch(`${apiUrl}/ai/configure`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: userPrompt }),
@@ -68,27 +67,25 @@ export default function AiConfigPanel({ apiUrl, onConfigChange }) {
       const data = await res.json()
 
       if (data.understood) {
-        // Add AI response to history
         setHistory(prev => [...prev, {
           role: 'ai',
-          text: `✅ ${data.description}`,
+          text: `\u2705 ${data.description}`,
           changes: data.changes,
         }])
-        // Apply changes
         if (onConfigChange) {
           onConfigChange(data.changes)
         }
       } else {
         setHistory(prev => [...prev, {
           role: 'ai',
-          text: `❌ ${data.description}`,
+          text: `\u274c ${data.description}`,
         }])
       }
     } catch (err) {
       setError(err.message)
       setHistory(prev => [...prev, {
         role: 'ai',
-        text: `⚠️ Error: ${err.message}`,
+        text: `\u26a0\ufe0f Error: ${err.message}`,
       }])
     }
 
@@ -116,10 +113,9 @@ export default function AiConfigPanel({ apiUrl, onConfigChange }) {
         customCSS: null,
       })
     }
-    setHistory(prev => [...prev, { role: 'ai', text: '🔄 Reset to default config' }])
+    setHistory(prev => [...prev, { role: 'ai', text: '\ud83d\udd04 Reset to default config' }])
   }
 
-  // Floating toggle button
   if (!isOpen) {
     return (
       <button
@@ -147,12 +143,11 @@ export default function AiConfigPanel({ apiUrl, onConfigChange }) {
         onMouseEnter={(e) => e.target.style.transform = 'scale(1.1)'}
         onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
       >
-        🤖
+        \ud83e\udd16
       </button>
     )
   }
 
-  // Expanded panel
   return (
     <div style={{
       position: 'fixed',
@@ -179,7 +174,7 @@ export default function AiConfigPanel({ apiUrl, onConfigChange }) {
         alignItems: 'center',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '18px' }}>🤖</span>
+          <span style={{ fontSize: '18px' }}>\ud83e\udd16</span>
           <span style={{ fontWeight: 600, fontSize: '14px', color: '#fff' }}>AI Config</span>
           <span style={{
             fontSize: '10px',
@@ -218,7 +213,7 @@ export default function AiConfigPanel({ apiUrl, onConfigChange }) {
               alignItems: 'center',
               justifyContent: 'center',
             }}
-          >×</button>
+          >\u00d7</button>
         </div>
       </div>
 
