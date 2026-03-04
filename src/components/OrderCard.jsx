@@ -1,12 +1,13 @@
 /**
  * OrderCard.jsx
  * Display a single order with status, customer info, shipments
- * v5.12.0 - Phase 4: Email button for customer communications
+ * v5.12.1 - Phase 5C: replaced all fetch() with apiFetch() for X-Admin-Token injection
  */
 
 import { useState } from 'react'
 import ShipmentRow from './ShipmentRow'
 import { API_URL } from '../config'
+import { apiFetch } from '../api'
 
 const STATUS_MAP = {
   'needs_payment_link': { label: '1-Need Invoice', color: '#f44336' },
@@ -28,23 +29,20 @@ const STATUS_OPTIONS = [
   { value: 'complete', label: 'Complete' }
 ]
 
-// Shipment-level status colors for warehouse pills
 const SHIPMENT_STATUS_COLORS = {
-  'needs_order': { color: '#f44336', label: 'Need to Order' },      // Red
-  'at_warehouse': { color: '#9c27b0', label: 'At Warehouse' },      // Purple
-  'needs_bol': { color: '#00bcd4', label: 'Need BOL' },             // Cyan
-  'ready_ship': { color: '#4caf50', label: 'Ready to Ship' },       // Green
-  'shipped': { color: '#607d8b', label: 'Shipped' },                // Blue-gray
-  'delivered': { color: '#9e9e9e', label: 'Delivered' }             // Gray
+  'needs_order': { color: '#f44336', label: 'Need to Order' },
+  'at_warehouse': { color: '#9c27b0', label: 'At Warehouse' },
+  'needs_bol': { color: '#00bcd4', label: 'Need BOL' },
+  'ready_ship': { color: '#4caf50', label: 'Ready to Ship' },
+  'shipped': { color: '#607d8b', label: 'Shipped' },
+  'delivered': { color: '#9e9e9e', label: 'Delivered' }
 }
 
-// Alert background colors
 const ALERT_BACKGROUNDS = {
-  'warning': '#FFFACD',   // Light yellow
-  'critical': '#FFB6C1'   // Light pink/red
+  'warning': '#FFFACD',
+  'critical': '#FFB6C1'
 }
 
-// Alert type labels
 const ALERT_TYPE_LABELS = {
   'out_of_stock': '\u26a0\ufe0f OUT OF STOCK',
   'backorder': '\u26a0\ufe0f BACKORDER',
@@ -77,25 +75,19 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
   const [isSavingNotes, setIsSavingNotes] = useState(false)
   
   const status = STATUS_MAP[order.current_status] || STATUS_MAP['needs_payment_link']
-
-  // Customer info
   const customerName = order.company_name || order.customer_name || 'Unknown'
   
-  // Format address: City, State ZIP on one line
   const cityStateZip = [
     order.city,
     order.state ? `${order.state}${order.zip_code ? ' ' + order.zip_code : ''}` : order.zip_code
   ].filter(Boolean).join(', ')
   
-  // Street address (separate line)
   const streetAddress = order.street || ''
 
-  // Format order date
   const orderDate = order.order_date
     ? new Date(order.order_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : ''
 
-  // Get warehouses
   const warehouses = [
     order.warehouse_1,
     order.warehouse_2,
@@ -103,13 +95,11 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
     order.warehouse_4
   ].filter(Boolean)
 
-  // Format order total
   const orderTotal = parseFloat(order.order_total || 0)
   const totalDisplay = orderTotal > 0
     ? `$${orderTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
     : ''
 
-  // Calculate shipping totals
   const shippingTotals = (order.shipments || []).reduce(
     (acc, shipment) => {
       const customerCharge =
@@ -133,7 +123,6 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
     { customerCharge: 0, profit: 0 }
   )
 
-  // Handle status change - use set-status endpoint
   const handleStatusChange = async (e) => {
     e.stopPropagation()
     const newStatus = e.target.value
@@ -141,7 +130,7 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
 
     setIsUpdating(true)
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${API_URL}/orders/${order.order_id}/set-status?status=${newStatus}&source=web_ui`,
         { method: 'PATCH' }
       )
@@ -159,17 +148,15 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
     }
   }
 
-  // Format AI summary - clean up
   const formatAISummary = (summary) => {
     if (!summary) return ''
     return summary.replace(/\n{2,}/g, '\n').trim()
   }
 
-  // Save notes
   const handleSaveNotes = async () => {
     setIsSavingNotes(true)
     try {
-      const res = await fetch(`${API_URL}/orders/${order.order_id}`, {
+      const res = await apiFetch(`${API_URL}/orders/${order.order_id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes })
@@ -184,17 +171,13 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
     }
   }
 
-  // Calculate days until archive for shipped orders
   const getShippedDaysRemaining = () => {
     const shippedShipments = (order.shipments || []).filter(s => s.status === 'shipped' && s.clock_started_at)
     if (shippedShipments.length === 0) return null
-    
-    // Get the most recent clock start
     const latestClock = shippedShipments.reduce((latest, s) => {
       const clockDate = new Date(s.clock_started_at)
       return clockDate > latest ? clockDate : latest
     }, new Date(0))
-    
     const daysSince = Math.floor((new Date() - latestClock) / (1000 * 60 * 60 * 24))
     return Math.max(0, 5 - daysSince)
   }
@@ -211,7 +194,6 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
         backgroundColor: alertBackground || undefined
       }}
     >
-      {/* Alert Banner */}
       {alertLabel && (
         <div style={{
           backgroundColor: order.alert_level === 'critical' ? '#d32f2f' : '#f57c00',
@@ -226,7 +208,6 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
         </div>
       )}
       
-      {/* Header */}
       <div className="order-header">
         <div className="order-id" onClick={() => onOpenDetail(order)}>
           #{order.order_id}
@@ -257,7 +238,6 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
         </div>
       </div>
 
-      {/* Body */}
       <div className="order-body" onClick={() => onOpenDetail(order)}>
         <div className="customer-info">
           <div className="customer-name">{customerName}</div>
@@ -293,12 +273,10 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
         {warehouses.length > 0 && (
           <div className="warehouses">
             {warehouses.map((wh, i) => {
-              // Find the shipment for this warehouse to get its status
               const shipment = order.shipments?.find(s => s.warehouse === wh)
               const shipmentStatus = shipment?.status || 'needs_order'
               const statusInfo = SHIPMENT_STATUS_COLORS[shipmentStatus] || SHIPMENT_STATUS_COLORS['needs_order']
               
-              // Calculate days remaining for this shipment's clock
               let clockDays = null
               if (shipment?.status === 'shipped' && shipment?.clock_started_at) {
                 const clockDate = new Date(shipment.clock_started_at)
@@ -340,7 +318,6 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
         )}
       </div>
 
-      {/* Shipments */}
       {order.shipments && order.shipments.length > 0 && (
         <div className="order-shipments">
           {(order.shipments || []).map((shipment, i) =>
@@ -355,7 +332,6 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
         </div>
       )}
 
-      {/* Comments - styled box */}
       {order.comments && (
         <div style={{ 
           backgroundColor: '#fff3e0', 
@@ -369,7 +345,6 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
         </div>
       )}
 
-      {/* Internal Notes - Purple, Editable */}
       <div style={{ 
         backgroundColor: '#f3e5f5', 
         padding: '8px 12px', 
@@ -385,45 +360,23 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
               placeholder="Add internal notes..."
               rows={3}
               style={{ 
-                width: '100%', 
-                marginBottom: '8px', 
-                padding: '6px', 
-                borderRadius: '4px', 
-                border: '1px solid #9c27b0', 
-                fontSize: '13px', 
-                fontFamily: 'inherit', 
-                resize: 'vertical', 
-                boxSizing: 'border-box' 
+                width: '100%', marginBottom: '8px', padding: '6px', borderRadius: '4px', 
+                border: '1px solid #9c27b0', fontSize: '13px', fontFamily: 'inherit', 
+                resize: 'vertical', boxSizing: 'border-box' 
               }}
             />
             <div style={{ display: 'flex', gap: '8px' }}>
               <button 
                 onClick={handleSaveNotes} 
                 disabled={isSavingNotes} 
-                style={{ 
-                  backgroundColor: '#4caf50', 
-                  color: 'white', 
-                  border: 'none', 
-                  padding: '4px 12px', 
-                  borderRadius: '4px', 
-                  cursor: 'pointer', 
-                  fontSize: '12px' 
-                }}
+                style={{ backgroundColor: '#4caf50', color: 'white', border: 'none', padding: '4px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
               >
                 {isSavingNotes ? 'Saving...' : 'Save'}
               </button>
               <button 
                 onClick={() => { setIsEditingNotes(false); setNotes(order.notes || ''); }} 
                 disabled={isSavingNotes} 
-                style={{ 
-                  backgroundColor: '#9e9e9e', 
-                  color: 'white', 
-                  border: 'none', 
-                  padding: '4px 12px', 
-                  borderRadius: '4px', 
-                  cursor: 'pointer', 
-                  fontSize: '12px' 
-                }}
+                style={{ backgroundColor: '#9e9e9e', color: 'white', border: 'none', padding: '4px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
               >
                 Cancel
               </button>
@@ -436,16 +389,7 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
                 <div><strong style={{ color: '#7b1fa2' }}>Notes:</strong> {order.notes}</div>
                 <button 
                   onClick={() => setIsEditingNotes(true)} 
-                  style={{ 
-                    backgroundColor: '#9c27b0', 
-                    color: 'white', 
-                    border: 'none', 
-                    padding: '2px 8px', 
-                    borderRadius: '4px', 
-                    cursor: 'pointer', 
-                    fontSize: '11px', 
-                    flexShrink: 0 
-                  }}
+                  style={{ backgroundColor: '#9c27b0', color: 'white', border: 'none', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', flexShrink: 0 }}
                 >
                   Edit
                 </button>
@@ -453,15 +397,7 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
             ) : (
               <button 
                 onClick={() => setIsEditingNotes(true)} 
-                style={{ 
-                  backgroundColor: '#9c27b0', 
-                  color: 'white', 
-                  border: 'none', 
-                  padding: '4px 12px', 
-                  borderRadius: '4px', 
-                  cursor: 'pointer', 
-                  fontSize: '12px' 
-                }}
+                style={{ backgroundColor: '#9c27b0', color: 'white', border: 'none', padding: '4px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
               >
                 + Add Note
               </button>
@@ -470,7 +406,6 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
         )}
       </div>
 
-      {/* Email Button - Phase 4 */}
       {onOpenEmail && (
         <div style={{ marginTop: '8px' }} onClick={(e) => e.stopPropagation()}>
           <button
@@ -489,12 +424,11 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
               gap: '6px'
             }}
           >
-            📧 Email Customer
+            \ud83d\udce7 Email Customer
           </button>
         </div>
       )}
 
-      {/* AI Summary */}
       {order.ai_summary && (
         <div style={{ 
           backgroundColor: '#f5f5f5', 
