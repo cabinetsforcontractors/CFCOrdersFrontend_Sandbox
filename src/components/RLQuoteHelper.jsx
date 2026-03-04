@@ -1,7 +1,7 @@
 /**
  * RLQuoteHelper.jsx
  * Complete RL Carriers quote and BOL helper
- * v5.9.0 - Phase 2: Added "Get Auto Quote" via rl-quote-sandbox proxy
+ * v5.9.1 - Phase 5C: replaced all fetch() with apiFetch() for X-Admin-Token injection
  *
  * Auto-quote flow: validate address (Smarty) → R+L freight quote → +$50 markup
  * Manual flow: Open RL website, enter quote details manually (still works)
@@ -9,8 +9,8 @@
 
 import { useState } from 'react'
 import { CustomerAddress, BillToAddress, CopyButton } from './CustomerAddress'
-
 import { API_URL } from '../config'
+import { apiFetch } from '../api'
 
 const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
   const [quoteNumber, setQuoteNumber] = useState(data.existing_quote?.quote_number || '')
@@ -19,22 +19,16 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(!!data.existing_quote?.quote_url)
 
-  // Auto-quote state
   const [autoQuoting, setAutoQuoting] = useState(false)
   const [autoQuoteResult, setAutoQuoteResult] = useState(null)
   const [autoQuoteError, setAutoQuoteError] = useState(null)
 
-  // Calculate customer price (+$50 markup)
   const customerPrice = quotePrice ? (parseFloat(quotePrice) + 50).toFixed(2) : null
 
-  // Combined emails for RL notification field
   const combinedEmails = data.destination?.email
     ? `${data.destination.email}, cabinetsforcontractors@gmail.com`
     : 'cabinetsforcontractors@gmail.com'
 
-  // =========================================================================
-  // AUTO-QUOTE: Call backend proxy → rl-quote-sandbox
-  // =========================================================================
   const handleAutoQuote = async () => {
     setAutoQuoting(true)
     setAutoQuoteError(null)
@@ -52,7 +46,7 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
         customer_markup: 50.00
       }
 
-      const res = await fetch(`${API_URL}/proxy/auto-quote`, {
+      const res = await apiFetch(`${API_URL}/proxy/auto-quote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -66,7 +60,6 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
       const result = await res.json()
       setAutoQuoteResult(result)
 
-      // Auto-fill the fields
       if (result.success) {
         if (result.quote_number) setQuoteNumber(result.quote_number)
         if (result.carrier_price) setQuotePrice(String(result.carrier_price))
@@ -88,7 +81,7 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
       if (customerPrice) params.append('rl_customer_price', customerPrice)
       if (quoteUrl) params.append('quote_url', quoteUrl)
 
-      await fetch(`${API_URL}/shipments/${shipmentId}?${params.toString()}`, {
+      await apiFetch(`${API_URL}/shipments/${shipmentId}?${params.toString()}`, {
         method: 'PATCH'
       })
 
@@ -105,22 +98,19 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
     if (onOpenRL) {
       onOpenRL()
     } else {
-      const w = 800; const h = window.screen.height; const left = window.screen.width - w; window.open("https://www.rlcarriers.com/freight/shipping/rate-quote", "ShippingQuote", `width=${w},height=${h},left=${left},top=0,resizable=yes,scrollbars=yes`)
+      const w = 800; const h = window.screen.height; const left = window.screen.width - w
+      window.open('https://www.rlcarriers.com/freight/shipping/rate-quote', 'ShippingQuote', `width=${w},height=${h},left=${left},top=0,resizable=yes,scrollbars=yes`)
     }
   }
 
   const openSavedQuote = () => {
     if (quoteUrl) {
-      const w = 800
-      const h = window.screen.height
-      const left = window.screen.width - w
+      const w = 800, h = window.screen.height, left = window.screen.width - w
       window.open(quoteUrl, 'ShippingQuote', `width=${w},height=${h},left=${left},top=0,resizable=yes,scrollbars=yes`)
     }
   }
 
-  const handleChangeUrl = () => {
-    setSaved(false)
-  }
+  const handleChangeUrl = () => { setSaved(false) }
 
   return (
     <div className="rl-helper">
@@ -164,7 +154,6 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
           </div>
         )}
 
-        {/* AUTO-QUOTE BUTTON — Primary action */}
         <div style={{ display: 'flex', gap: '10px', marginTop: '12px', flexWrap: 'wrap' }}>
           <button
             className="btn btn-primary"
@@ -204,31 +193,21 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
           </button>
         </div>
 
-        {/* Auto-quote error */}
         {autoQuoteError && (
           <div style={{
-            marginTop: '10px',
-            padding: '10px 14px',
-            backgroundColor: '#fff3cd',
-            border: '1px solid #ffc107',
-            borderRadius: '6px',
-            color: '#856404',
-            fontSize: '13px'
+            marginTop: '10px', padding: '10px 14px',
+            backgroundColor: '#fff3cd', border: '1px solid #ffc107',
+            borderRadius: '6px', color: '#856404', fontSize: '13px'
           }}>
             ⚠️ {autoQuoteError}
           </div>
         )}
 
-        {/* Auto-quote result summary */}
         {autoQuoteResult?.success && (
           <div style={{
-            marginTop: '10px',
-            padding: '12px 14px',
-            backgroundColor: '#d4edda',
-            border: '1px solid #28a745',
-            borderRadius: '6px',
-            fontSize: '13px',
-            color: '#111'
+            marginTop: '10px', padding: '12px 14px',
+            backgroundColor: '#d4edda', border: '1px solid #28a745',
+            borderRadius: '6px', fontSize: '13px', color: '#111'
           }}>
             <strong style={{ color: '#111' }}>✅ Auto Quote Complete</strong>
             <div style={{ marginTop: '6px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
@@ -252,7 +231,6 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
               <span>{autoQuoteResult.is_residential ? 'Yes' : 'No (Commercial)'}</span>
             </div>
 
-            {/* Show validated address if different */}
             {autoQuoteResult.validated_address?.address && (
               <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #c3e6cb' }}>
                 <strong>Validated Address:</strong>
@@ -276,33 +254,15 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
         <div className="input-grid">
           <div className="input-group">
             <label>Quote Number:</label>
-            <input
-              type="text"
-              value={quoteNumber}
-              onChange={(e) => setQuoteNumber(e.target.value)}
-              placeholder="e.g., 9680088"
-            />
+            <input type="text" value={quoteNumber} onChange={(e) => setQuoteNumber(e.target.value)} placeholder="e.g., 9680088" />
           </div>
-
           <div className="input-group">
             <label>Quote Price ($):</label>
-            <input
-              type="number"
-              step="0.01"
-              value={quotePrice}
-              onChange={(e) => setQuotePrice(e.target.value)}
-              placeholder="e.g., 179.38"
-            />
+            <input type="number" step="0.01" value={quotePrice} onChange={(e) => setQuotePrice(e.target.value)} placeholder="e.g., 179.38" />
           </div>
-
           <div className="input-group">
             <label>Customer Price (+$50):</label>
-            <input
-              type="text"
-              readOnly
-              value={customerPrice ? `$${customerPrice}` : 'Auto-calculated'}
-              className="calculated"
-            />
+            <input type="text" readOnly value={customerPrice ? `$${customerPrice}` : 'Auto-calculated'} className="calculated" />
           </div>
         </div>
 
@@ -322,35 +282,20 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
         <div className="button-row">
           {saved ? (
             <>
-              <button
-                className="btn btn-success"
-                onClick={openSavedQuote}
-              >
-                Open Quote
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={handleChangeUrl}
-              >
-                Change URL
-              </button>
+              <button className="btn btn-success" onClick={openSavedQuote}>Open Quote</button>
+              <button className="btn btn-secondary" onClick={handleChangeUrl}>Change URL</button>
             </>
           ) : (
-            <button
-              className="btn btn-success"
-              onClick={handleSave}
-              disabled={saving}
-            >
+            <button className="btn btn-success" onClick={handleSave} disabled={saving}>
               {saving ? 'Saving...' : 'Save Quote'}
             </button>
           )}
         </div>
       </div>
 
-      {/* Section 3: BOL Helper - Customer Address */}
+      {/* Section 3: BOL Helper */}
       <div className="rl-section bol-helper">
         <h3>BOL Helper - Copy for RL Form</h3>
-
         <div className="address-section">
           <h4>Ship To (Customer)</h4>
           <CopyButton label="Company/Name" text={data.destination?.name} />
@@ -361,9 +306,7 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
           <CopyButton label="Phone" text={data.destination?.phone} />
           <CopyButton label="Email" text={data.destination?.email} />
         </div>
-
         <BillToAddress />
-
         <div className="address-section">
           <h4>Email Notifications</h4>
           <CopyButton label="Both Emails" text={combinedEmails} />
