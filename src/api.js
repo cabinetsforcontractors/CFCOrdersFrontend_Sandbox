@@ -1,15 +1,15 @@
 /**
  * api.js — CFC Orders central fetch helper
- * v1.0.0 - Phase 5C: inject X-Admin-Token on every request
+ * v1.1.0 - Phase 7: token rotated CFC2025 → CFC2026 (production promotion)
  *
- * All write endpoints (PATCH, DELETE, POST) now require X-Admin-Token
+ * All write endpoints (PATCH, DELETE, POST) require X-Admin-Token
  * via Depends(require_admin) on the backend (Phase 5 hardening).
  * We inject it on ALL requests for simplicity — harmless on GETs.
  *
  * Token rotation (JWT, Option C) will update ADMIN_TOKEN here only.
  */
 
-const ADMIN_TOKEN = 'CFC2025'
+const ADMIN_TOKEN = 'CFC2026'
 
 /**
  * apiFetch(url, options)
