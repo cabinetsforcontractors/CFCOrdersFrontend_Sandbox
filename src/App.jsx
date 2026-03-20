@@ -1,6 +1,6 @@
 /**
  * App.jsx - CFC Orders Dashboard
- * v7.2.2 - Phase 5C: all fetch() replaced with apiFetch() for X-Admin-Token injection
+ * v7.2.3 - WS17: Sort Review tool button added to header
  *
  * Tab layout: All | Inactive | Invoice | Pay | Order | Warehouse | BOL | Ship | Done
  * "All" = all orders NOT in Done tab (active + inactive lifecycle)
@@ -454,6 +454,16 @@ function App() {
             style={{ background: brainOpen ? 'rgba(124,58,237,0.2)' : undefined, borderColor: brainOpen ? '#7c3aed' : undefined, color: brainOpen ? '#a78bfa' : undefined }}>
             &#x1F9E0; Brain
           </button>
+
+          {/* WS17 Sort Review Tool */}
+          <button
+            onClick={() => window.open('/sort_order_review.html', '_blank')}
+            title="WS17 Sort Order & Category Review"
+            style={{ background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: '#10b981' }}
+          >
+            &#x1F4CA; Sort Review
+          </button>
+
           <button onClick={() => window.open(OTHER_ENV_URL, '_blank')}
             style={{
               background: IS_SANDBOX ? 'rgba(16,185,129,0.12)' : 'rgba(245,158,11,0.12)',
