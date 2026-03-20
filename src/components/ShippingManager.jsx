@@ -1,14 +1,14 @@
 /**
- * ShippingManager.jsx v5.9.3
+ * ShippingManager.jsx v5.9.4
+ * Phase 5C: replaced all fetch() with apiFetch() for X-Admin-Token injection
  * Fix: removed onUpdate() from handleMethodChange to prevent modal blink
- * (loadOrders sets loading=true which kills the modal via App.jsx early return)
- * Orders refresh when modal closes via closeShippingManager → loadOrders()
  */
 
 import { useState, useEffect } from 'react'
 import RLQuoteHelper from './RLQuoteHelper'
 import { CustomerAddress } from './CustomerAddress'
 import { API_URL } from '../config'
+import { apiFetch } from '../api'
 
 const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate }) => {
   const [method, setMethod] = useState(shipment?.ship_method || '')
@@ -41,7 +41,7 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
   const loadRLData = async () => {
     setLoading(true)
     try {
-      const res = await fetch(`${API_URL}/shipments/${shipment.shipment_id}/rl-quote-data`)
+      const res = await apiFetch(`${API_URL}/shipments/${shipment.shipment_id}/rl-quote-data`)
       const data = await res.json()
       if (data.status === 'ok') setRlData(data)
     } catch (err) { console.error('Failed to load RL data:', err) }
@@ -50,9 +50,7 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
   
   const handleMethodChange = async (newMethod) => {
     setMethod(newMethod)
-    // Save method to backend (don't call onUpdate here — it triggers loadOrders
-    // which sets loading=true in App.jsx, causing the modal to disappear briefly)
-    try { await fetch(`${API_URL}/shipments/${shipment.shipment_id}?ship_method=${newMethod}`, { method: 'PATCH' }) }
+    try { await apiFetch(`${API_URL}/shipments/${shipment.shipment_id}?ship_method=${newMethod}`, { method: 'PATCH' }) }
     catch (err) { console.error('Failed to update shipping method:', err) }
     if (newMethod === 'LTL') setView('rl')
     else if (newMethod === 'Pirateship') setView('pirateship')
@@ -69,7 +67,7 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
       const params = new URLSearchParams()
       if (liCost) params.append('li_quote_price', liCost)
       if (liCharge) params.append('li_customer_price', liCharge)
-      await fetch(`${API_URL}/shipments/${shipment.shipment_id}?${params.toString()}`, { method: 'PATCH' })
+      await apiFetch(`${API_URL}/shipments/${shipment.shipment_id}?${params.toString()}`, { method: 'PATCH' })
       if (onUpdate) onUpdate(); onClose()
     } catch (err) { console.error('Failed to save Li pricing:', err) }
   }
@@ -79,7 +77,7 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
       const params = new URLSearchParams()
       if (btCost) params.append('quote_price', btCost)
       if (btCharge) params.append('customer_price', btCharge)
-      await fetch(`${API_URL}/shipments/${shipment.shipment_id}?${params.toString()}`, { method: 'PATCH' })
+      await apiFetch(`${API_URL}/shipments/${shipment.shipment_id}?${params.toString()}`, { method: 'PATCH' })
       if (onUpdate) onUpdate(); onClose()
     } catch (err) { console.error('Failed to save Box Truck pricing:', err) }
   }
@@ -89,7 +87,7 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
       const params = new URLSearchParams()
       if (psQuoteUrl) params.append('ps_quote_url', psQuoteUrl)
       if (psQuotePrice) params.append('ps_quote_price', psQuotePrice)
-      await fetch(`${API_URL}/shipments/${shipment.shipment_id}?${params.toString()}`, { method: 'PATCH' })
+      await apiFetch(`${API_URL}/shipments/${shipment.shipment_id}?${params.toString()}`, { method: 'PATCH' })
       setPsSaved(true)
     } catch (err) { console.error('Failed to save Pirateship quote:', err) }
   }

@@ -1,12 +1,12 @@
 /**
  * OrderComments.jsx
  * Display and edit internal notes for an order
- * v1.0.2 - Improved save + AI summary refresh error handling
+ * v1.0.3 - Phase 5C: replaced all fetch() with apiFetch() for X-Admin-Token injection
  */
 
 import { useState } from 'react'
-
 import { API_URL } from '../config'
+import { apiFetch } from '../api'
 
 const OrderComments = ({ order, onUpdate }) => {
   const [notes, setNotes] = useState(order.notes || '')
@@ -17,8 +17,7 @@ const OrderComments = ({ order, onUpdate }) => {
   const handleSave = async () => {
     setIsSaving(true)
     try {
-      // 1) Save internal notes
-      const patchRes = await fetch(`${API_URL}/orders/${order.order_id}`, {
+      const patchRes = await apiFetch(`${API_URL}/orders/${order.order_id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes })
@@ -30,8 +29,7 @@ const OrderComments = ({ order, onUpdate }) => {
         throw new Error('Failed to save notes')
       }
 
-      // 2) Force-regenerate AI summary after notes are saved
-      const summaryRes = await fetch(
+      const summaryRes = await apiFetch(
         `${API_URL}/orders/${order.order_id}/generate-summary?force=true`,
         { method: 'POST' }
       )
@@ -42,7 +40,6 @@ const OrderComments = ({ order, onUpdate }) => {
         throw new Error('Failed to refresh AI summary')
       }
 
-      // 3) Close editor and let parent re-fetch updated order (including ai_summary)
       setIsEditing(false)
       if (onUpdate) onUpdate()
     } catch (err) {
@@ -55,7 +52,7 @@ const OrderComments = ({ order, onUpdate }) => {
   const handleRefreshSummary = async () => {
     setIsRefreshingSummary(true)
     try {
-      const summaryRes = await fetch(
+      const summaryRes = await apiFetch(
         `${API_URL}/orders/${order.order_id}/generate-summary?force=true`,
         { method: 'POST' }
       )
@@ -76,7 +73,6 @@ const OrderComments = ({ order, onUpdate }) => {
 
   return (
     <div className="order-comments">
-      {/* Customer Comments (from B2BWave - read only) */}
       {order.comments && (
         <div className="comments-section">
           <h4>Customer Comments</h4>
@@ -84,7 +80,6 @@ const OrderComments = ({ order, onUpdate }) => {
         </div>
       )}
 
-      {/* Internal Notes (editable) */}
       <div className="comments-section">
         <div className="section-header">
           <h4>Internal Notes</h4>
@@ -131,7 +126,6 @@ const OrderComments = ({ order, onUpdate }) => {
         )}
       </div>
 
-      {/* AI Summary */}
       <div className="comments-section">
         <div className="section-header">
           <h4>AI Summary</h4>

@@ -1,83 +1,95 @@
 /**
- * App.jsx - Main Application
- * v5.9.8 - Comprehensive AI Summary in Order Popout
- * 
- * Orchestrates:
- * - Login/auth
- * - Order loading
- * - Component rendering
- * - Modal management
- * - Comprehensive AI Summary
+ * App.jsx - CFC Orders Dashboard
+ * v7.2.3 - WS17: Sort Review tool button added to header
+ *
+ * Tab layout: All | Inactive | Invoice | Pay | Order | Warehouse | BOL | Ship | Done
+ * "All" = all orders NOT in Done tab (active + inactive lifecycle)
+ * "Inactive" = orders with lifecycle_status === 'inactive' (7+ days no customer email)
+ * "Done" = complete orders (includes canceled with indicator)
  */
 
-import { useState, useEffect } from 'react'
-import StatusBar from './components/StatusBar'
-import OrderCard from './components/OrderCard'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import ShippingManager from './components/ShippingManager'
-import OrderComments from './components/OrderComments'
+import EmailPanel from './components/EmailPanel'
+import BrainChat from './components/BrainChat'
 
-import { API_URL, APP_PASSWORD } from './config'
+import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL } from './config'
+import { apiFetch } from './api'
 
-// Status mapping for display
-const STATUS_MAP = {
-  'needs_payment_link': { label: '1-Need Invoice', class: 'needs-invoice' },
-  'awaiting_payment': { label: '2-Awaiting Pay', class: 'awaiting-pay' },
-  'needs_warehouse_order': { label: '3-Need to Order', class: 'needs-order' },
-  'awaiting_warehouse': { label: '4-At Warehouse', class: 'at-warehouse' },
-  'needs_bol': { label: '5-Need BOL', class: 'needs-bol' },
-  'awaiting_shipment': { label: '6-Ready Ship', class: 'ready-ship' },
-  'complete': { label: 'Complete', class: 'complete' }
-}
-
-const STATUS_OPTIONS = [
-  { value: 'needs_payment_link', label: '1-Need Invoice' },
-  { value: 'awaiting_payment', label: '2-Awaiting Pay' },
-  { value: 'needs_warehouse_order', label: '3-Need to Order' },
-  { value: 'awaiting_warehouse', label: '4-At Warehouse' },
-  { value: 'needs_bol', label: '5-Need BOL' },
-  { value: 'awaiting_shipment', label: '6-Ready Ship' },
-  { value: 'complete', label: 'Complete' }
+const STATUSES = [
+  { key: 'needs_payment_link',    label: 'Need Invoice',   short: 'Invoice',   badge: 'sb-invoice',   card: 'mc-invoice' },
+  { key: 'awaiting_payment',      label: 'Awaiting Pay',   short: 'Pay',       badge: 'sb-pay',       card: 'mc-pay' },
+  { key: 'needs_warehouse_order', label: 'Need to Order',  short: 'Order',     badge: 'sb-order',     card: 'mc-order' },
+  { key: 'awaiting_warehouse',    label: 'At Warehouse',   short: 'Warehouse', badge: 'sb-warehouse', card: 'mc-warehouse' },
+  { key: 'needs_bol',             label: 'Need BOL',       short: 'BOL',       badge: 'sb-bol',       card: 'mc-bol' },
+  { key: 'awaiting_shipment',     label: 'Ready Ship',     short: 'Ship',      badge: 'sb-ship',      card: 'mc-ship' },
+  { key: 'complete',              label: 'Complete',       short: 'Done',      badge: 'sb-complete',  card: 'mc-complete' },
 ]
 
+const STATUS_MAP = Object.fromEntries(STATUSES.map(s => [s.key, s]))
+const ACTIVE_STATUS_KEYS = STATUSES.filter(s => s.key !== 'complete').map(s => s.key)
+
+const ALERT_LABELS = {
+  needs_invoice:            { label: 'Needs Invoice',            icon: '\ud83d\udccb' },
+  awaiting_payment_long:    { label: 'Awaiting Payment',         icon: '\ud83d\udcb0' },
+  needs_warehouse_order:    { label: 'Needs Warehouse Order',    icon: '\ud83c\udfed' },
+  at_warehouse_long:        { label: 'At Warehouse Too Long',    icon: '\u23f3' },
+  needs_bol:                { label: 'Needs BOL',                icon: '\ud83d\udcc4' },
+  ready_ship_long:          { label: 'Ready to Ship Too Long',   icon: '\ud83d\ude9b' },
+  tracking_not_sent:        { label: 'Tracking Not Sent',        icon: '\ud83d\udcec' },
+  delivery_confirm_needed:  { label: 'Needs Delivery Confirm',   icon: '\u2705' },
+}
+
+const fmtMoney = (v) => '$' + parseFloat(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '\u2014'
+const fmtDateTime = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '\u2014'
+
+const formatAddress = (o) => {
+  const parts = []
+  if (o.street) parts.push(o.street)
+  const csz = []
+  if (o.city) csz.push(o.city)
+  if (o.state) csz.push(o.zip_code ? `${o.state} ${o.zip_code}` : o.state)
+  else if (o.zip_code) csz.push(o.zip_code)
+  if (csz.length) parts.push(csz.join(', '))
+  return parts.join(', ')
+}
+
 function App() {
-  // Auth state
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState('')
-  
-  // Data state
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
-  
-  // Filter state
+  const [activeTab, setActiveTab] = useState('all')
   const [statusFilter, setStatusFilter] = useState(null)
-  const [showArchived, setShowArchived] = useState(false)
-  
-  // Modal state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortCol, setSortCol] = useState('order_date')
+  const [sortDir, setSortDir] = useState('desc')
+  const [lifecycleSummary, setLifecycleSummary] = useState({ active: 0, inactive: 0, canceled: 0, total: 0 })
   const [selectedOrder, setSelectedOrder] = useState(null)
-  const [shippingModal, setShippingModal] = useState(null)
-  
-  // Comprehensive AI Summary state
+  const [panelTab, setPanelTab] = useState('details')
   const [comprehensiveSummary, setComprehensiveSummary] = useState('')
   const [summaryLoading, setSummaryLoading] = useState(false)
-  
-  // Check saved login
+  const [alertSummary, setAlertSummary] = useState({ total_unresolved: 0, by_type: {} })
+  const [allAlerts, setAllAlerts] = useState([])
+  const [alertsOpen, setAlertsOpen] = useState(false)
+  const [alertsLoading, setAlertsLoading] = useState(false)
+  const [orderAlerts, setOrderAlerts] = useState([])
+  const [checkingAlerts, setCheckingAlerts] = useState(false)
+  const alertsRef = useRef(null)
+  const [shippingModal, setShippingModal] = useState(null)
+  const [emailOrder, setEmailOrder] = useState(null)
+  const [brainOpen, setBrainOpen] = useState(false)
+
   useEffect(() => {
-    const saved = localStorage.getItem('cfc_logged_in')
-    if (saved === 'true') {
-      setIsLoggedIn(true)
-    }
+    if (localStorage.getItem('cfc_logged_in') === 'true') setIsLoggedIn(true)
   }, [])
-  
-  // Load data when logged in
+
   useEffect(() => {
-    if (isLoggedIn) {
-      loadOrders()
-    }
+    if (isLoggedIn) { loadOrders(); loadAlertSummary(); loadLifecycleSummary() }
   }, [isLoggedIn])
-  
-  // === AUTH ===
-  
+
   const handleLogin = (e) => {
     e.preventDefault()
     if (password === APP_PASSWORD) {
@@ -88,74 +100,218 @@ function App() {
       setLoginError('Incorrect password')
     }
   }
-  
+
   const handleLogout = () => {
     setIsLoggedIn(false)
     localStorage.removeItem('cfc_logged_in')
   }
-  
-  // === DATA LOADING ===
-  
-  const loadOrders = async () => {
+
+  const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`${API_URL}/orders?limit=200&include_complete=true`)
+      const res = await apiFetch(`${API_URL}/orders?limit=200&include_complete=true`)
       const data = await res.json()
-      if (data.orders) {
-        setOrders(data.orders)
-      }
+      if (data.orders) setOrders(data.orders)
     } catch (err) {
       console.error('Failed to load orders:', err)
     }
     setLoading(false)
-  }
-  
-  // === FILTERING ===
-  
-  const getFilteredOrders = () => {
-    let filtered = orders
-    
-    // Filter by status
-    if (statusFilter) {
-      filtered = filtered.filter(o => o.current_status === statusFilter)
-    } else if (showArchived) {
-      // Show ONLY complete/archived orders
-      filtered = filtered.filter(o => o.current_status === 'complete')
-    } else {
-      // Hide complete orders (show active only)
-      filtered = filtered.filter(o => o.current_status !== 'complete')
-    }
-    
-    return filtered
-  }
-  
-  // === STATUS UPDATES ===
-  
-  const updateOrderStatus = async (orderId, field, value) => {
+  }, [])
+
+  const loadLifecycleSummary = useCallback(async () => {
     try {
-      await fetch(`${API_URL}/orders/${orderId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: value })
-      })
-      loadOrders()
+      const res = await apiFetch(`${API_URL}/lifecycle/summary`)
+      const data = await res.json()
+      if (data.success !== false) {
+        setLifecycleSummary({
+          active: data.active || 0,
+          inactive: data.inactive || 0,
+          canceled: data.canceled || 0,
+          total: data.total || 0,
+        })
+      }
     } catch (err) {
-      console.error('Failed to update order:', err)
+      console.log('Lifecycle summary not available:', err.message)
+    }
+  }, [])
+
+  const loadAlertSummary = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/alerts/summary`)
+      const data = await res.json()
+      if (data.success) {
+        setAlertSummary({ total_unresolved: data.total_unresolved, by_type: data.by_type })
+      }
+    } catch (err) {
+      console.error('Failed to load alert summary:', err)
+    }
+  }, [])
+
+  const loadAllAlerts = useCallback(async () => {
+    setAlertsLoading(true)
+    try {
+      const res = await apiFetch(`${API_URL}/alerts/`)
+      const data = await res.json()
+      if (data.success) setAllAlerts(data.alerts || [])
+    } catch (err) {
+      console.error('Failed to load alerts:', err)
+    }
+    setAlertsLoading(false)
+  }, [])
+
+  const loadOrderAlerts = useCallback(async (orderId) => {
+    try {
+      const res = await apiFetch(`${API_URL}/alerts/?order_id=${orderId}`)
+      const data = await res.json()
+      if (data.success) setOrderAlerts(data.alerts || [])
+    } catch (err) {
+      console.error('Failed to load order alerts:', err)
+      setOrderAlerts([])
+    }
+  }, [])
+
+  const resolveAlert = async (alertId) => {
+    try {
+      const res = await apiFetch(`${API_URL}/alerts/${alertId}/resolve`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        loadAllAlerts()
+        loadAlertSummary()
+        if (selectedOrder) loadOrderAlerts(selectedOrder.order_id)
+      }
+    } catch (err) {
+      console.error('Failed to resolve alert:', err)
     }
   }
-  
-  // === MODALS ===
-  
-  const openOrderDetail = (order) => {
+
+  const runAlertCheck = async () => {
+    setCheckingAlerts(true)
+    try {
+      const res = await apiFetch(`${API_URL}/alerts/check-all`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success) { loadAllAlerts(); loadAlertSummary() }
+    } catch (err) {
+      console.error('Failed to run alert check:', err)
+    }
+    setCheckingAlerts(false)
+  }
+
+  const toggleAlerts = () => {
+    if (!alertsOpen) loadAllAlerts()
+    setAlertsOpen(v => !v)
+  }
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (alertsRef.current && !alertsRef.current.contains(e.target)) setAlertsOpen(false)
+    }
+    if (alertsOpen) document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [alertsOpen])
+
+  const counts = useMemo(() => {
+    const c = {}
+    STATUSES.forEach(s => { c[s.key] = 0 })
+    orders.forEach(o => { if (c[o.current_status] !== undefined) c[o.current_status]++ })
+    return c
+  }, [orders])
+
+  const lifecycleCounts = useMemo(() => {
+    let allActive = 0, inactive = 0, done = 0, canceledInDone = 0
+    orders.forEach(o => {
+      if (o.current_status === 'complete') {
+        done++
+        if (o.lifecycle_status === 'canceled') canceledInDone++
+      } else if (o.lifecycle_status === 'inactive') {
+        inactive++
+      } else {
+        allActive++
+      }
+    })
+    return { allActive, inactive, done, canceledInDone, allNonDone: allActive + inactive }
+  }, [orders])
+
+  const filteredOrders = useMemo(() => {
+    let list = orders
+    if (activeTab === 'done') {
+      list = list.filter(o => o.current_status === 'complete')
+    } else if (activeTab === 'inactive') {
+      list = list.filter(o => o.current_status !== 'complete' && o.lifecycle_status === 'inactive')
+    } else {
+      list = list.filter(o => o.current_status !== 'complete')
+    }
+    if (statusFilter) list = list.filter(o => o.current_status === statusFilter)
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      list = list.filter(o =>
+        String(o.order_id || '').toLowerCase().includes(q) ||
+        (o.company_name || '').toLowerCase().includes(q) ||
+        (o.customer_name || '').toLowerCase().includes(q) ||
+        (o.email || '').toLowerCase().includes(q) ||
+        (o.city || '').toLowerCase().includes(q)
+      )
+    }
+    list = [...list].sort((a, b) => {
+      let av = a[sortCol], bv = b[sortCol]
+      if (sortCol === 'order_total' || sortCol === 'days_open') {
+        av = parseFloat(av || 0); bv = parseFloat(bv || 0)
+      } else {
+        av = String(av || '').toLowerCase(); bv = String(bv || '').toLowerCase()
+      }
+      if (av < bv) return sortDir === 'asc' ? -1 : 1
+      if (av > bv) return sortDir === 'asc' ? 1 : -1
+      return 0
+    })
+    return list
+  }, [orders, activeTab, statusFilter, searchQuery, sortCol, sortDir])
+
+  const alertsByType = useMemo(() => {
+    const grouped = {}
+    allAlerts.forEach(a => {
+      if (!grouped[a.alert_type]) grouped[a.alert_type] = []
+      grouped[a.alert_type].push(a)
+    })
+    return grouped
+  }, [allAlerts])
+
+  const handleSort = (col) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('asc') }
+  }
+
+  const handleMetricClick = (key) => {
+    if (key === 'complete') { setActiveTab('done'); setStatusFilter(null) }
+    else {
+      if (activeTab === 'done') setActiveTab('all')
+      setStatusFilter(statusFilter === key ? null : key)
+    }
+  }
+
+  const handleTabClick = (tab) => { setActiveTab(tab); setStatusFilter(null) }
+
+  const openDetail = (order) => {
     setSelectedOrder(order)
-    setComprehensiveSummary('') // Reset summary when opening new order
-  }
-  
-  const closeOrderDetail = () => {
-    setSelectedOrder(null)
+    setPanelTab('details')
     setComprehensiveSummary('')
+    loadOrderAlerts(order.order_id)
   }
-  
+
+  const closeDetail = () => { setSelectedOrder(null); setComprehensiveSummary(''); setOrderAlerts([]) }
+
+  const generateSummary = async () => {
+    if (!selectedOrder) return
+    setSummaryLoading(true)
+    setComprehensiveSummary('')
+    try {
+      const res = await apiFetch(`${API_URL}/orders/${selectedOrder.order_id}/comprehensive-summary`, { method: 'POST' })
+      const data = await res.json()
+      setComprehensiveSummary(data.summary || data.detail || 'No summary returned.')
+    } catch (err) {
+      setComprehensiveSummary('Failed to generate summary.')
+    }
+    setSummaryLoading(false)
+  }
+
   const openShippingManager = (shipment, order) => {
     setShippingModal({
       shipment,
@@ -171,76 +327,41 @@ function App() {
       }
     })
   }
-  
-  const closeShippingManager = () => {
-    setShippingModal(null)
-    loadOrders()
-  }
-  
-  // === COMPREHENSIVE AI SUMMARY ===
-  
-  const generateComprehensiveSummary = async () => {
-    if (!selectedOrder) return
-    
-    setSummaryLoading(true)
-    setComprehensiveSummary('')
-    
+
+  const closeShippingManager = () => { setShippingModal(null); loadOrders() }
+  const handleEmailSent = () => { setEmailOrder(null); loadOrders() }
+
+  const updateStatus = async (orderId, value) => {
     try {
-      const res = await fetch(`${API_URL}/orders/${selectedOrder.order_id}/comprehensive-summary`, {
-        method: 'POST'
+      await apiFetch(`${API_URL}/orders/${orderId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_status: value })
       })
-      const data = await res.json()
-      
-      if (data.summary) {
-        setComprehensiveSummary(data.summary)
-      } else if (data.detail) {
-        setComprehensiveSummary(`Error: ${data.detail}`)
-      }
+      loadOrders()
     } catch (err) {
-      console.error('Failed to generate summary:', err)
-      setComprehensiveSummary('Failed to generate summary. Please try again.')
+      console.error('Failed to update:', err)
     }
-    
-    setSummaryLoading(false)
   }
-  
-  // === HELPER: Format Address ===
-  const formatAddress = (order) => {
-    const parts = []
-    if (order.street) parts.push(order.street)
-    
-    const cityStateZip = []
-    if (order.city) cityStateZip.push(order.city)
-    if (order.state) {
-      if (order.zip_code) {
-        cityStateZip.push(`${order.state} ${order.zip_code}`)
-      } else {
-        cityStateZip.push(order.state)
-      }
-    } else if (order.zip_code) {
-      cityStateZip.push(order.zip_code)
+
+  const runLifecycleCheck = async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/lifecycle/check-all`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success !== false) { loadOrders(); loadLifecycleSummary() }
+    } catch (err) {
+      console.error('Lifecycle check failed:', err)
     }
-    
-    if (cityStateZip.length > 0) {
-      parts.push(cityStateZip.join(', '))
-    }
-    
-    return parts.join(', ')
   }
-  
-  // === RENDER: LOGIN ===
-  
+
+  const handleContentAreaClick = () => { if (selectedOrder) closeDetail() }
+
   if (!isLoggedIn) {
     return (
       <div className="login-container">
-        <form onSubmit={handleLogin} className="login-form">
+        <form className="login-form" onSubmit={handleLogin}>
           <h2>CFC Orders</h2>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter password"
-          />
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter password" />
           <button type="submit">Login</button>
           {loginError && <p className="error">{loginError}</p>}
         </form>
@@ -248,235 +369,441 @@ function App() {
     )
   }
 
-  // Gate main app render until orders are ready
-  if (loading) {
-    return <div className="loading">Loading orders...</div>
-  }
+  if (loading && orders.length === 0) return <div className="loading">Loading orders...</div>
 
-  if (!Array.isArray(orders)) {
-    return <div className="loading">Loading orders...</div>
-  }
-
-  // === RENDER: MAIN APP ===
-
-  const filteredOrders = getFilteredOrders()
+  const totalAlerts = alertSummary.total_unresolved || 0
 
   return (
     <div className="app">
-      {/* Header */}
       <header className="app-header">
-        <h1>CFC Orders</h1>
+        <div className="header-left">
+          <h1>CFC <span>Orders</span></h1>
+          {IS_SANDBOX && <span className="env-badge env-sandbox">SANDBOX</span>}
+        </div>
         <div className="header-actions">
-          <button onClick={loadOrders} disabled={loading}>
-            {loading ? 'Loading...' : 'Refresh'}
+          <div className="search-box">
+            <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>&#x1F50D;</span>
+            <input type="text" placeholder="Search orders..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          </div>
+
+          <div className="alerts-trigger-wrap" ref={alertsRef}>
+            <button
+              onClick={toggleAlerts}
+              className={`alerts-bell-btn${totalAlerts > 0 ? ' has-alerts' : ''}${alertsOpen ? ' active' : ''}`}
+              title={`${totalAlerts} unresolved alerts`}
+            >
+              &#x1F514;
+              {totalAlerts > 0 && <span className="alerts-badge-count">{totalAlerts}</span>}
+            </button>
+
+            {alertsOpen && (
+              <div className="alerts-dropdown">
+                <div className="alerts-dropdown-header">
+                  <div className="alerts-dropdown-title">
+                    <span style={{ fontSize: '16px' }}>&#x26A0;&#xFE0F;</span>
+                    <span>{totalAlerts} Unresolved Alert{totalAlerts !== 1 ? 's' : ''}</span>
+                  </div>
+                  <button className="btn btn-sm btn-primary" onClick={runAlertCheck} disabled={checkingAlerts}>
+                    {checkingAlerts ? '\u27f3 Checking...' : '\u27f3 Run Check'}
+                  </button>
+                </div>
+                <div className="alerts-dropdown-body">
+                  {alertsLoading ? (
+                    <div className="alerts-loading">Loading alerts...</div>
+                  ) : allAlerts.length === 0 ? (
+                    <div className="alerts-empty">
+                      <span style={{ fontSize: '24px' }}>&#x2705;</span>
+                      <span>All clear \u2014 no unresolved alerts</span>
+                    </div>
+                  ) : (
+                    Object.entries(alertsByType).map(([type, alerts]) => {
+                      const meta = ALERT_LABELS[type] || { label: type, icon: '\u26a0\ufe0f' }
+                      return (
+                        <div key={type} className="alerts-group">
+                          <div className="alerts-group-header">
+                            <span>{meta.icon}</span>
+                            <span className="alerts-group-label">{meta.label}</span>
+                            <span className="alerts-group-count">{alerts.length}</span>
+                          </div>
+                          {alerts.map(alert => (
+                            <div key={alert.id} className="alert-row">
+                              <div className="alert-row-info">
+                                <span className="alert-order-link" onClick={(e) => {
+                                  e.stopPropagation()
+                                  const order = orders.find(o => o.order_id === alert.order_id)
+                                  if (order) { openDetail(order); setAlertsOpen(false) }
+                                }}>#{alert.order_id}</span>
+                                <span className="alert-message">{alert.alert_message}</span>
+                                <span className="alert-time">{fmtDateTime(alert.created_at)}</span>
+                              </div>
+                              <button className="alert-resolve-btn" onClick={(e) => { e.stopPropagation(); resolveAlert(alert.id) }} title="Resolve this alert">
+                                &#x2713;
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button onClick={() => setBrainOpen(v => !v)} title="Brain Chat"
+            style={{ background: brainOpen ? 'rgba(124,58,237,0.2)' : undefined, borderColor: brainOpen ? '#7c3aed' : undefined, color: brainOpen ? '#a78bfa' : undefined }}>
+            &#x1F9E0; Brain
+          </button>
+
+          {/* WS17 Sort Review Tool */}
+          <button
+            onClick={() => window.open('/sort_order_review.html', '_blank')}
+            title="WS17 Sort Order & Category Review"
+            style={{ background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: '#10b981' }}
+          >
+            &#x1F4CA; Sort Review
+          </button>
+
+          <button onClick={() => window.open(OTHER_ENV_URL, '_blank')}
+            style={{
+              background: IS_SANDBOX ? 'rgba(16,185,129,0.12)' : 'rgba(245,158,11,0.12)',
+              borderColor: IS_SANDBOX ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)',
+              color: IS_SANDBOX ? 'var(--success)' : 'var(--warning)'
+            }}>
+            {IS_SANDBOX ? '\u{1F7E2} Open Live' : '\u{1F9EA} Open Sandbox'}
+          </button>
+          <button onClick={() => { loadOrders(); loadAlertSummary(); loadLifecycleSummary() }} disabled={loading}>
+            {loading ? '...' : '\u{21BB} Refresh'}
           </button>
           <button onClick={handleLogout}>Logout</button>
         </div>
       </header>
-      
-      {/* Status Filter Bar */}
-      <StatusBar 
-        orders={orders}
-        activeFilter={statusFilter}
-        onFilterChange={setStatusFilter}
-        showArchived={showArchived}
-        onToggleArchived={setShowArchived}
-      />
-      
-      {/* Orders Grid */}
-      <main className="orders-grid">
-        {loading ? (
-          <div className="loading">Loading orders...</div>
-        ) : !Array.isArray(filteredOrders) ? (
-          <div className="loading">Loading orders...</div>
-        ) : filteredOrders.length === 0 ? (
-          <div className="empty">No orders found</div>
-        ) : (
-          filteredOrders.map(order => (
-            <OrderCard
-              key={order.order_id}
-              order={order}
-              onOpenDetail={openOrderDetail}
-              onOpenShippingManager={(shipment) => openShippingManager(shipment, order)}
-              onUpdate={loadOrders}
-            />
-          ))
-        )}
-      </main>
-      
-      {/* Order Detail Modal - Redesigned */}
-      {selectedOrder && (
-        <div className="modal-overlay" onClick={closeOrderDetail}>
-          <div 
-            className="modal order-detail-modal" 
-            onClick={(e) => e.stopPropagation()} 
-            style={{ 
-              maxHeight: '90vh', 
-              display: 'flex', 
-              flexDirection: 'column',
-              width: '420px',
-              maxWidth: '95vw'
-            }}
-          >
-            {/* Header: Order # and Total */}
-            <div className="modal-header" style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center',
-              padding: '16px 20px',
-              backgroundColor: '#f8f9fa',
-              borderBottom: '1px solid #e0e0e0'
-            }}>
-              <h2 style={{ margin: 0, fontSize: '20px' }}>Order #{selectedOrder.order_id}</h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <span style={{ fontSize: '18px', fontWeight: 'bold', color: '#28a745' }}>
-                  ${parseFloat(selectedOrder.order_total || 0).toFixed(2)}
-                </span>
-                <button 
-                  className="modal-close" 
-                  onClick={closeOrderDetail}
-                  style={{
-                    width: '28px',
-                    height: '28px',
-                    borderRadius: '50%',
-                    border: 'none',
-                    backgroundColor: '#eee',
-                    cursor: 'pointer',
-                    fontSize: '18px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}
-                >×</button>
+
+      <div className="main-content">
+        <div className={`content-area${selectedOrder ? ' panel-open' : ''}`} onClick={handleContentAreaClick}>
+
+          <div className="metrics-row">
+            {STATUSES.map(s => (
+              <div
+                key={s.key}
+                className={`metric-card ${s.card}${statusFilter === s.key || (s.key === 'complete' && activeTab === 'done') ? ' active' : ''}`}
+                onClick={() => handleMetricClick(s.key)}
+              >
+                <div className="metric-count">{counts[s.key]}</div>
+                <div className="metric-label">{s.short}</div>
               </div>
-            </div>
-            
-            <div className="modal-body" style={{ 
-              flex: 1, 
-              display: 'flex', 
-              flexDirection: 'column', 
-              overflow: 'hidden',
-              padding: '16px'
-            }}>
-              {/* Order Details Section */}
-              <div style={{ 
-                border: '1px solid #e0e0e0', 
-                borderRadius: '6px', 
-                padding: '12px 14px',
-                marginBottom: '12px',
-                backgroundColor: '#fff'
-              }}>
-                {/* Row 1: Order Details - Company Name */}
-                <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#666', marginBottom: '4px' }}>
-                  Order Details - <span style={{ color: '#333', fontWeight: 'normal' }}>{selectedOrder.company_name || selectedOrder.customer_name}</span>
-                </div>
-                
-                {/* Row 2: Address */}
-                <div style={{ fontSize: '11px', color: '#666', marginBottom: '8px' }}>
-                  {formatAddress(selectedOrder)}
-                </div>
-                
-                {/* Row 3: Date | Days Open */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '13px', color: '#333' }}>
-                    Date: {new Date(selectedOrder.order_date).toLocaleDateString()}
-                  </span>
-                  <span style={{ fontSize: '13px', color: '#333' }}>
-                    Days Open: <strong>{selectedOrder.days_open}</strong>
-                  </span>
-                </div>
-                
-                {/* Row 4: Status | Generate AI Summary Button */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '13px', color: '#333' }}>
-                    Status: {STATUS_MAP[selectedOrder.current_status]?.label || selectedOrder.current_status}
-                  </span>
-                  <button
-                    onClick={generateComprehensiveSummary}
-                    disabled={summaryLoading}
-                    style={{
-                      padding: '5px 10px',
-                      backgroundColor: summaryLoading ? '#ccc' : '#28a745',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: summaryLoading ? 'not-allowed' : 'pointer',
-                      fontSize: '11px',
-                      fontWeight: '500'
-                    }}
-                  >
-                    {summaryLoading ? 'Generating...' : 'Generate AI Summary'}
+            ))}
+          </div>
+
+          <div className="tabs-row">
+            <div className="tabs">
+              <button className={`tab-btn${activeTab === 'all' && !statusFilter ? ' active' : ''}`} onClick={() => handleTabClick('all')} title="All active orders (excludes Done)">
+                All <span className="tab-count">{lifecycleCounts.allNonDone}</span>
+              </button>
+              <button
+                className={`tab-btn tab-inactive${activeTab === 'inactive' ? ' active' : ''}`}
+                onClick={() => handleTabClick('inactive')}
+                title="Orders with no customer email for 7+ days"
+                style={activeTab === 'inactive'
+                  ? { backgroundColor: 'rgba(245,158,11,0.15)', borderColor: '#f59e0b', color: '#f59e0b' }
+                  : { borderColor: 'rgba(245,158,11,0.3)', color: '#f59e0b' }}
+              >
+                Inactive <span className="tab-count">{lifecycleCounts.inactive}</span>
+              </button>
+              <span style={{ width: '1px', height: '24px', background: 'var(--border)', margin: '0 4px' }} />
+              {ACTIVE_STATUS_KEYS.map(key => {
+                const s = STATUS_MAP[key]
+                const isActive = statusFilter === key
+                return (
+                  <button key={key} className={`tab-btn${isActive ? ' active' : ''}`}
+                    onClick={() => { if (activeTab === 'done') setActiveTab('all'); setStatusFilter(isActive ? null : key) }}
+                    style={isActive ? { backgroundColor: `var(--status-${s.badge}-bg, rgba(255,255,255,0.1))` } : {}}>
+                    {s.short} <span className="tab-count">{counts[key]}</span>
                   </button>
-                </div>
-              </div>
-              
-              {/* AI Analysis Section */}
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '250px' }}>
-                <h3 style={{ margin: '0 0 8px 0', fontSize: '12px', fontWeight: 'bold', color: '#666' }}>
-                  AI Analysis
-                </h3>
-                
-                {/* Summary Content Area */}
-                <div style={{ 
-                  flex: 1, 
-                  backgroundColor: '#f8f9fa', 
-                  borderRadius: '6px', 
-                  padding: '14px',
-                  overflow: 'auto',
-                  minHeight: '220px'
-                }}>
-                  {summaryLoading ? (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                      <div style={{ textAlign: 'center' }}>
-                        <div style={{ 
-                          width: '36px', 
-                          height: '36px', 
-                          border: '3px solid #e0e0e0',
-                          borderTop: '3px solid #28a745',
-                          borderRadius: '50%',
-                          animation: 'spin 1s linear infinite',
-                          margin: '0 auto 12px'
-                        }}></div>
-                        <p style={{ color: '#666', margin: 0, fontSize: '13px' }}>Generating comprehensive analysis...</p>
-                      </div>
-                    </div>
-                  ) : comprehensiveSummary ? (
-                    <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6', fontSize: '13px' }}>
-                      {comprehensiveSummary}
-                    </div>
-                  ) : (
-                    <div style={{ 
-                      display: 'flex', 
-                      flexDirection: 'column',
-                      alignItems: 'center', 
-                      justifyContent: 'center', 
-                      height: '100%',
-                      color: '#999'
-                    }}>
-                      <p style={{ margin: 0, textAlign: 'center', fontSize: '13px', lineHeight: '1.6' }}>
-                        Click "Generate AI Summary" above to create<br/>
-                        a comprehensive AI analysis of this order<br/>
-                        including all history and communications.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
+                )
+              })}
+              <span style={{ width: '1px', height: '24px', background: 'var(--border)', margin: '0 4px' }} />
+              <button
+                className={`tab-btn tab-done${activeTab === 'done' ? ' active' : ''}`}
+                onClick={() => handleTabClick('done')}
+                title="Completed and canceled orders"
+                style={activeTab === 'done' ? { backgroundColor: 'rgba(158,158,158,0.15)', borderColor: '#9e9e9e', color: '#9e9e9e' } : {}}
+              >
+                Done <span className="tab-count">{lifecycleCounts.done}</span>
+              </button>
+            </div>
+            <div className="tab-actions">
+              {statusFilter && <button className="btn btn-sm" onClick={() => setStatusFilter(null)}>Clear filter</button>}
             </div>
           </div>
+
+          {filteredOrders.length === 0 ? (
+            <div className="empty">No orders found</div>
+          ) : (
+            <table className="orders-table">
+              <thead>
+                <tr>
+                  <th onClick={() => handleSort('order_id')}>Order {sortCol === 'order_id' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
+                  <th onClick={() => handleSort('company_name')}>Customer {sortCol === 'company_name' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
+                  <th onClick={() => handleSort('current_status')}>Status</th>
+                  <th onClick={() => handleSort('order_total')}>Total {sortCol === 'order_total' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
+                  <th onClick={() => handleSort('order_date')}>Date {sortCol === 'order_date' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
+                  <th onClick={() => handleSort('days_open')}>Age {sortCol === 'days_open' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
+                  <th>Warehouse</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredOrders.map(order => {
+                  const st = STATUS_MAP[order.current_status] || {}
+                  const days = parseInt(order.days_open || 0)
+                  const ageClass = days > 14 ? 'age-danger' : days > 7 ? 'age-warn' : ''
+                  const isSelected = selectedOrder?.order_id === order.order_id
+                  const isCanceled = order.lifecycle_status === 'canceled'
+                  const isInactive = order.lifecycle_status === 'inactive'
+                  const wh = order.shipments?.[0]?.warehouse || ''
+                  return (
+                    <tr key={order.order_id}
+                      className={`${isSelected ? 'row-selected' : ''}${isCanceled ? ' row-canceled' : ''}${isInactive ? ' row-inactive' : ''}`}
+                      onClick={(e) => { e.stopPropagation(); openDetail(order) }}
+                    >
+                      <td>
+                        <span className="order-id">#{order.order_id}</span>
+                        {isCanceled && <span className="canceled-badge" title="Canceled">CANCELED</span>}
+                        {isInactive && activeTab !== 'inactive' && <span className="inactive-badge" title="Inactive 7+ days">INACTIVE</span>}
+                      </td>
+                      <td>
+                        <div className="customer-name">{order.company_name || order.customer_name || '\u2014'}</div>
+                        {order.city && <div className="customer-company">{order.city}{order.state ? `, ${order.state}` : ''}</div>}
+                      </td>
+                      <td>
+                        <span className={`status-badge ${st.badge || ''}`}>
+                          <span className="status-dot" />
+                          {st.label || order.current_status}
+                        </span>
+                      </td>
+                      <td><span className="amount">{fmtMoney(order.order_total)}</span></td>
+                      <td style={{ color: 'var(--text-dim)', fontSize: '12px' }}>{fmtDate(order.order_date)}</td>
+                      <td><span className={`age-cell ${ageClass}`}>{days}d</span></td>
+                      <td>{wh && <span className="warehouse-tag">{wh}</span>}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
+
+        <div className={`detail-panel${selectedOrder ? ' open' : ''}`}>
+          {selectedOrder && (
+            <>
+              <div className="panel-header">
+                <h3>
+                  <span className="order-id">#{selectedOrder.order_id}</span>
+                  <span className="amount" style={{ marginLeft: '8px' }}>{fmtMoney(selectedOrder.order_total)}</span>
+                  {selectedOrder.lifecycle_status === 'canceled' && <span className="canceled-badge" style={{ marginLeft: '8px' }}>CANCELED</span>}
+                  {selectedOrder.lifecycle_status === 'inactive' && <span className="inactive-badge" style={{ marginLeft: '8px' }}>INACTIVE</span>}
+                </h3>
+                <button className="panel-close" onClick={closeDetail}>{'\u00D7'}</button>
+              </div>
+
+              <div className="panel-tabs">
+                <button className={`panel-tab${panelTab === 'details' ? ' active' : ''}`} onClick={() => setPanelTab('details')}>Details</button>
+                <button className={`panel-tab${panelTab === 'ai' ? ' active' : ''}`} onClick={() => setPanelTab('ai')}>AI Summary</button>
+                <button className={`panel-tab${panelTab === 'actions' ? ' active' : ''}`} onClick={() => setPanelTab('actions')}>Actions</button>
+              </div>
+
+              <div className="panel-content">
+                {panelTab === 'details' && (
+                  <>
+                    {orderAlerts.length > 0 && (
+                      <div className="detail-section order-alerts-section">
+                        <h4>&#x26A0;&#xFE0F; Active Alerts ({orderAlerts.length})</h4>
+                        {orderAlerts.map(alert => {
+                          const meta = ALERT_LABELS[alert.alert_type] || { label: alert.alert_type, icon: '\u26a0\ufe0f' }
+                          return (
+                            <div key={alert.id} className="order-alert-card">
+                              <div className="order-alert-info">
+                                <div className="order-alert-type"><span>{meta.icon}</span><span>{meta.label}</span></div>
+                                <div className="order-alert-msg">{alert.alert_message}</div>
+                                <div className="order-alert-time">{fmtDateTime(alert.created_at)}</div>
+                              </div>
+                              <button className="btn btn-sm alert-resolve-inline" onClick={() => resolveAlert(alert.id)}>
+                                &#x2713; Resolve
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    {(selectedOrder.lifecycle_status === 'inactive' || selectedOrder.lifecycle_status === 'canceled') && (
+                      <div className="detail-section" style={{
+                        background: selectedOrder.lifecycle_status === 'canceled' ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
+                        border: `1px solid ${selectedOrder.lifecycle_status === 'canceled' ? 'rgba(239,68,68,0.3)' : 'rgba(245,158,11,0.3)'}`,
+                        borderRadius: '8px', padding: '12px',
+                      }}>
+                        <h4 style={{ color: selectedOrder.lifecycle_status === 'canceled' ? '#ef4444' : '#f59e0b', margin: '0 0 8px 0' }}>
+                          {selectedOrder.lifecycle_status === 'canceled' ? '\u274c Canceled' : '\u23f8\ufe0f Inactive'}
+                        </h4>
+                        {selectedOrder.lifecycle_deadline_at && (
+                          <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
+                            {selectedOrder.lifecycle_status === 'inactive'
+                              ? `Will be canceled: ${fmtDate(selectedOrder.lifecycle_deadline_at)}`
+                              : `Canceled at: ${fmtDate(selectedOrder.completed_at || selectedOrder.lifecycle_deadline_at)}`}
+                          </div>
+                        )}
+                        {selectedOrder.last_customer_email_at && (
+                          <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px' }}>
+                            Last customer email: {fmtDate(selectedOrder.last_customer_email_at)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="detail-section">
+                      <h4>Customer</h4>
+                      <div className="detail-row"><span className="detail-label">Company</span><span className="detail-value">{selectedOrder.company_name || selectedOrder.customer_name || '\u2014'}</span></div>
+                      <div className="detail-row"><span className="detail-label">Email</span><span className="detail-value mono">{selectedOrder.email || '\u2014'}</span></div>
+                      <div className="detail-row"><span className="detail-label">Phone</span><span className="detail-value mono">{selectedOrder.phone || '\u2014'}</span></div>
+                      <div className="detail-row"><span className="detail-label">Address</span><span className="detail-value">{formatAddress(selectedOrder) || '\u2014'}</span></div>
+                    </div>
+
+                    <div className="detail-section">
+                      <h4>Order Info</h4>
+                      <div className="detail-row">
+                        <span className="detail-label">Status</span>
+                        <span className={`status-badge ${STATUS_MAP[selectedOrder.current_status]?.badge || ''}`}>
+                          <span className="status-dot" />
+                          {STATUS_MAP[selectedOrder.current_status]?.label || selectedOrder.current_status}
+                        </span>
+                      </div>
+                      <div className="detail-row"><span className="detail-label">Date</span><span className="detail-value">{fmtDate(selectedOrder.order_date)}</span></div>
+                      <div className="detail-row"><span className="detail-label">Days Open</span><span className="detail-value mono">{selectedOrder.days_open || 0}</span></div>
+                      <div className="detail-row"><span className="detail-label">Total</span><span className="detail-value mono" style={{ color: 'var(--success)' }}>{fmtMoney(selectedOrder.order_total)}</span></div>
+                      {selectedOrder.notes && (
+                        <div className="detail-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
+                          <span className="detail-label">Notes</span>
+                          <span className="detail-value" style={{ fontSize: '12px', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>{selectedOrder.notes}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {selectedOrder.shipments?.length > 0 && (
+                      <div className="detail-section">
+                        <h4>Shipments</h4>
+                        {selectedOrder.shipments.map((s, i) => (
+                          <div key={i} style={{ background: 'var(--bg-input)', borderRadius: '8px', padding: '10px 12px', marginBottom: '8px', border: '1px solid var(--border)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                              <span className="warehouse-tag">{s.warehouse || 'Unknown'}</span>
+                              <span className="amount" style={{ fontSize: '12px' }}>{s.weight_lbs ? `${s.weight_lbs} lbs` : ''}</span>
+                            </div>
+                            {s.pro_number && <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>PRO: <span className="mono">{s.pro_number}</span></div>}
+                            <button className="btn btn-sm" style={{ marginTop: '8px', fontSize: '11px' }} onClick={() => openShippingManager(s, selectedOrder)}>
+                              Manage Shipping
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="detail-section">
+                      <h4>Change Status</h4>
+                      <select
+                        value={selectedOrder.current_status}
+                        onChange={e => { updateStatus(selectedOrder.order_id, e.target.value); setSelectedOrder({ ...selectedOrder, current_status: e.target.value }) }}
+                        style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text)', fontFamily: 'inherit', fontSize: '13px' }}
+                      >
+                        {STATUSES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+                      </select>
+                    </div>
+                  </>
+                )}
+
+                {panelTab === 'ai' && (
+                  <div className="detail-section">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                      <h4 style={{ margin: 0 }}>AI Analysis</h4>
+                      <button className="btn btn-primary btn-sm" onClick={generateSummary} disabled={summaryLoading}>
+                        {summaryLoading ? 'Generating...' : 'Generate Summary'}
+                      </button>
+                    </div>
+                    <div style={{ background: 'var(--bg-input)', borderRadius: '8px', padding: '16px', minHeight: '200px', border: '1px solid var(--border)' }}>
+                      {summaryLoading ? (
+                        <div style={{ textAlign: 'center', paddingTop: '40px' }}>
+                          <div style={{ width: '32px', height: '32px', border: '3px solid var(--border)', borderTop: '3px solid var(--accent)', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
+                          <div style={{ color: 'var(--text-dim)', fontSize: '13px' }}>Analyzing order data...</div>
+                        </div>
+                      ) : comprehensiveSummary ? (
+                        <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6', fontSize: '13px', color: 'var(--text)' }}>{comprehensiveSummary}</div>
+                      ) : (
+                        <div style={{ textAlign: 'center', paddingTop: '50px', color: 'var(--text-muted)', fontSize: '13px', lineHeight: '1.8' }}>
+                          Click "Generate Summary" for a comprehensive<br />AI analysis of this order including<br />all history and communications.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {panelTab === 'actions' && (
+                  <div className="detail-section">
+                    <h4>Quick Actions</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <button className="btn" onClick={() => setEmailOrder(selectedOrder)}>&#x2709; Send Email</button>
+                      {selectedOrder.shipments?.length > 0 && (
+                        <button className="btn" onClick={() => openShippingManager(selectedOrder.shipments[0], selectedOrder)}>
+                          &#x1F69A; Shipping Manager
+                        </button>
+                      )}
+                      <button className="btn" onClick={() => {
+                        apiFetch(`${API_URL}/alerts/check/${selectedOrder.order_id}`, { method: 'POST' })
+                          .then(r => r.json())
+                          .then(() => { loadOrderAlerts(selectedOrder.order_id); loadAlertSummary() })
+                      }}>
+                        &#x1F514; Check Alerts
+                      </button>
+                      {selectedOrder.lifecycle_status === 'inactive' && (
+                        <button className="btn" style={{ borderColor: '#10b981', color: '#10b981' }}
+                          onClick={async () => {
+                            try {
+                              await apiFetch(`${API_URL}/lifecycle/extend/${selectedOrder.order_id}`, { method: 'POST' })
+                              loadOrders(); loadLifecycleSummary(); closeDetail()
+                            } catch (err) { console.error('Failed to reactivate:', err) }
+                          }}>
+                          &#x267B; Reactivate Order
+                        </button>
+                      )}
+                      <button className="btn btn-danger" onClick={() => { if (confirm('Archive this order?')) updateStatus(selectedOrder.order_id, 'complete') }}>
+                        Archive Order
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <BrainChat isOpen={brainOpen} onClose={() => setBrainOpen(false)} />
+
+      {emailOrder && (
+        <EmailPanel
+          orderId={emailOrder.order_id}
+          customerEmail={emailOrder.email}
+          onClose={() => setEmailOrder(null)}
+          onSent={handleEmailSent}
+        />
       )}
-      
-      {/* Shipping Manager Modal */}
+
       {shippingModal && (
         <div className="modal-overlay shipping-modal-overlay" onClick={closeShippingManager}>
-          <div className="modal shipping-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal shipping-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Shipping - {shippingModal.shipment.warehouse}</h2>
-              <button className="modal-close" onClick={closeShippingManager}>×</button>
+              <button className="modal-close" onClick={closeShippingManager}>{'\u00D7'}</button>
             </div>
             <div className="modal-body">
-              <ShippingManager 
+              <ShippingManager
                 shipment={shippingModal.shipment}
                 orderId={shippingModal.orderId}
                 customerInfo={shippingModal.customerInfo}
@@ -487,14 +814,6 @@ function App() {
           </div>
         </div>
       )}
-      
-      {/* CSS for spinner animation */}
-      <style>{`
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   )
 }
