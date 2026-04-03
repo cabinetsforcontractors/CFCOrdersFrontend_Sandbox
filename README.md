@@ -31,7 +31,7 @@ Production promotion is deferred. All active work is sandbox-only.
 
 | File | Version | Status |
 |------|---------|--------|
-| `src/App.jsx` | v5.10.0 (repo) / v5.10.5 (local) | Local ahead — push before any sandbox testing |
+| `src/App.jsx` | v5.10.0 (repo) / v7.2.3 (local) | Local significantly ahead — push before any sandbox testing |
 | `src/config.js` | v5.11.0 | Sandbox URL hardcoded — correct for sandbox use |
 | `src/api.js` | v1.1.0 | ✅ CFC2026 token, correct |
 | `src/components/OrderCard.jsx` | v5.12.1 | ✅ Uses apiFetch throughout |
@@ -61,8 +61,8 @@ No Vite env vars configured. All config is hardcoded in `src/config.js`.
 
 ## Known Issues
 
-### FIX 1 — Push local App.jsx v5.10.5
-Local is ahead of repo (v5.10.5 vs v5.10.0). Push before sandbox testing to ensure Vercel sandbox deploys correct version.
+### FIX 1 — Push local App.jsx v7.2.3
+Local is significantly ahead of repo (v7.2.3 vs v5.10.0). Push before sandbox testing to ensure Vercel sandbox deploys correct version.
 
 ### FIX 2 — StatusBar.jsx Sync AI uses raw fetch()
 `src/components/StatusBar.jsx` `handleSyncAI()` calls `fetch()` directly without `apiFetch()`.
