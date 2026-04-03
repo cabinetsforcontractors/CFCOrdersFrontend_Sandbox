@@ -5,6 +5,11 @@
 **Backend (sandbox):** https://cfcorderbackend-sandbox.onrender.com
 **Backend (production):** https://cfc-backend-b83s.onrender.com
 
+## ⛔ Session Rules — ALL Claude Sessions
+- READ this README before doing any work in this repo
+- DO NOT write or rewrite any file unless William explicitly says to in that session
+- Report only and stop unless William says otherwise
+
 ---
 
 ## READ THIS BEFORE ANY TASK
