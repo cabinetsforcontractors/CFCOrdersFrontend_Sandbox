@@ -31,7 +31,7 @@ Production promotion is deferred. All active work is sandbox-only.
 
 | File | Version | Status |
 |------|---------|--------|
-| `src/App.jsx` | v5.10.0 (repo) / v7.2.3 (local) | Local significantly ahead — push before any sandbox testing |
+| `src/App.jsx` | v7.2.3 | ✅ Pushed — sha ce6f739 |
 | `src/config.js` | v5.11.0 | Sandbox URL hardcoded — correct for sandbox use |
 | `src/api.js` | v1.1.0 | ✅ CFC2026 token, correct |
 | `src/components/OrderCard.jsx` | v5.12.1 | ✅ Uses apiFetch throughout |
@@ -61,18 +61,15 @@ No Vite env vars configured. All config is hardcoded in `src/config.js`.
 
 ## Known Issues
 
-### FIX 1 — Push local App.jsx v7.2.3
-Local is significantly ahead of repo (v7.2.3 vs v5.10.0). Push before sandbox testing to ensure Vercel sandbox deploys correct version.
-
-### FIX 2 — StatusBar.jsx Sync AI uses raw fetch()
+### FIX 1 — StatusBar.jsx Sync AI uses raw fetch()
 `src/components/StatusBar.jsx` `handleSyncAI()` calls `fetch()` directly without `apiFetch()`.
 If `/orders/regenerate-summaries` is admin-protected, this will 401.
 Fix: replace `fetch(...)` with `apiFetch(...)` and add the import.
 
-### FIX 3 — CLEANUP: Delete dead code from config.js
+### FIX 2 — CLEANUP: Delete dead code from config.js
 `APP_PASSWORD = 'cfc2025'` is exported but never imported by any component. Safe to delete.
 
-### FIX 4 — FUTURE: Convert API_URL to Vite env var
+### FIX 3 — FUTURE: Convert API_URL to Vite env var
 Replace hardcoded `API_URL` with `import.meta.env.VITE_API_URL` and set per deployment in Vercel dashboard.
 Not required now — deferred.
 
