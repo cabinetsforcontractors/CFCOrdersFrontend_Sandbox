@@ -19,9 +19,22 @@ Production promotion is deferred. All active work is sandbox-only.
 
 ## Current State (2026-04-03)
 
-**Active sandbox work:**
-- Lane A (P1): Test full Shippo checkout flow end-to-end for a <70 lb order
-- Lane B (P1): Verify each payment automation trigger fires in sandbox with a test order
+**Lane A — Shippo end-to-end: COMPLETE ✅**
+- Checkout routing: <70 lbs → Shippo, 70+ lbs → R+L LTL
+- Long item detection: single number ≥84 in name → LONG_PARCEL box (98×9×6)
+- X-separated dimensions (e.g. 24WX84HX3D) → forced LTL
+- 96" trim tested on order 5518: parcel_length=96, USPS $101.66 ✅
+
+**Lane B — Payment automation triggers: IN PROGRESS**
+- Trigger 1 ✅ BUILT: B2BWave webhook → generates token → emails payment_link to customer
+- Trigger 2 ✅ BUILT: Square payment received → auto-creates BOL for LTL warehouses
+- Trigger 3 ✅ DONE: periodic Square sync (existing, sufficient)
+- Trigger 4 ✅ BUILT: Square payment received → sends payment_confirmation email
+
+**Trigger 1 blocker: Gmail OAuth refresh token expired on sandbox Render**
+- `GMAIL_REFRESH_TOKEN` needs to be regenerated
+- Steps: https://developers.google.com/oauthplayground → use own credentials → authorize `https://mail.google.com/` with cabinetsforcontractors@gmail.com → exchange code → copy refresh_token → update Render env var → manual deploy
+- Once done: retest with `POST /webhook/b2bwave-order` using order 5518
 
 **Phase 7 production promotion:** DEFERRED — sandbox lanes not complete yet.
 
@@ -63,15 +76,13 @@ No Vite env vars configured. All config is hardcoded in `src/config.js`.
 
 ### FIX 1 — StatusBar.jsx Sync AI uses raw fetch()
 `src/components/StatusBar.jsx` `handleSyncAI()` calls `fetch()` directly without `apiFetch()`.
-If `/orders/regenerate-summaries` is admin-protected, this will 401.
 Fix: replace `fetch(...)` with `apiFetch(...)` and add the import.
 
 ### FIX 2 — CLEANUP: Delete dead code from config.js
-`APP_PASSWORD = 'cfc2025'` is exported but never imported by any component. Safe to delete.
+`APP_PASSWORD = 'cfc2025'` is exported but never imported. Safe to delete.
 
 ### FIX 3 — FUTURE: Convert API_URL to Vite env var
-Replace hardcoded `API_URL` with `import.meta.env.VITE_API_URL` and set per deployment in Vercel dashboard.
-Not required now — deferred.
+Deferred — not required for sandbox work.
 
 ---
 
@@ -86,8 +97,9 @@ All write endpoints require `X-Admin-Token: CFC2026`.
 
 | Issue | File | Status |
 |-------|------|--------|
-| auth.py defaults to CFC2025 if ADMIN_API_KEY env var missing | `auth.py` | Render env var must be set on sandbox service |
-| square_sync.py hardcodes production Square URL | `square_sync.py` | Needs code fix — deferred |
+| Gmail refresh token expired on sandbox Render | `gmail_sync.py` | Regenerate via OAuth Playground — see Current State above |
+| auth.py defaults to CFC2025 if ADMIN_API_KEY env var missing | `auth.py` | ✅ Fixed — CFC2026 set on sandbox Render |
+| square_sync.py hardcodes production Square URL | `square_sync.py` | Deferred |
 
 ---
 
