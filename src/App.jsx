@@ -1,6 +1,6 @@
 /**
  * App.jsx - CFC Orders Dashboard
- * v7.4.0 - AI summary sub-row on every order in table, Sync AI button in header
+ * v7.5.0 - Multi-warehouse shipping: all warehouses in table column, per-warehouse shipping buttons
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
@@ -10,7 +10,7 @@ import EmailPanel from './components/EmailPanel'
 import BrainChat from './components/BrainChat'
 
 import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL } from './config'
-import { apiFetch } from './api'
+import { apiFetch } from '../api'
 
 const STATUSES = [
   { key: 'needs_payment_link',    label: 'Need Invoice',   short: 'Invoice',   badge: 'sb-invoice',   card: 'mc-invoice' },
@@ -501,7 +501,8 @@ function App() {
                   const isSelected = selectedOrder?.order_id === order.order_id
                   const isCanceled = order.lifecycle_status === 'canceled'
                   const isInactive = order.lifecycle_status === 'inactive'
-                  const wh = order.shipments?.[0]?.warehouse || ''
+                  // Multi-warehouse: collect all unique warehouses for this order
+                  const orderWarehouses = [...new Set((order.shipments || []).map(s => s.warehouse).filter(Boolean))]
                   const alertBg = order.alert_level === 'critical' ? '#FFF1F1' : order.alert_level === 'warning' ? '#FFFBEB' : undefined
                   const alertLabel = order.alert_type ? ALERT_TYPE_LABELS[order.alert_type] : null
                   const shipping = getShippingTotals(order)
@@ -554,9 +555,9 @@ function App() {
                       </td>
                       <td style={{ color: 'var(--text-dim)', fontSize: '12px' }}>{fmtDate(order.order_date)}</td>
                       <td><span className={`age-cell ${ageClass}`}>{days}d</span></td>
-                      <td>{wh && <span className="warehouse-tag">{wh}</span>}</td>
+                      {/* Multi-warehouse: render a tag for each warehouse */}
+                      <td>{orderWarehouses.map(w => <span key={w} className="warehouse-tag" style={{display:'block',marginBottom:'2px'}}>{w}</span>)}</td>
 
-                      {/* AI Summary inline — spans all cols via CSS trick, rendered in last cell */}
                       {order.ai_summary && (
                         <td colSpan={7} style={{ display: 'none' }} />
                       )}
@@ -618,7 +619,7 @@ function App() {
                       <div className="detail-section" style={{ background: '#F8F7FF', border: '1px solid #DDD6FE', borderLeft: '4px solid #7C3AED', borderRadius: '0 6px 6px 0', padding: '12px 14px', marginBottom: '16px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                           <h4 style={{ margin: 0, color: '#7C3AED', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>&#x1F9E0; AI State Summary</h4>
-                          <button className="btn btn-sm" style={{ fontSize: '10px', padding: '2px 8px', borderColor: '#DDD6FE', color: '#7C3AED' }} onClick={() => setPanelTab('ai')}>Full analysis →</button>
+                          <button className="btn btn-sm" style={{ fontSize: '10px', padding: '2px 8px', borderColor: '#DDD6FE', color: '#7C3AED' }} onClick={() => setPanelTab('ai')}>Full analysis &#x2192;</button>
                         </div>
                         <div style={{ fontSize: '12px', color: 'var(--text)', lineHeight: '1.7', whiteSpace: 'pre-wrap' }}>{selectedOrder.ai_summary}</div>
                       </div>
@@ -745,9 +746,10 @@ function App() {
                           </button>
                         </div>
                       )}
-                      {selectedOrder.shipments?.length > 0 && (
-                        <button className="btn" onClick={() => openShippingManager(selectedOrder.shipments[0], selectedOrder)}>&#x1F69A; Shipping Manager</button>
-                      )}
+                      {/* Multi-warehouse: one button per shipment/warehouse */}
+                      {selectedOrder.shipments?.length > 0 && selectedOrder.shipments.map((s, i) => (
+                        <button key={s.shipment_id || i} className="btn" onClick={() => openShippingManager(s, selectedOrder)}>&#x1F69A; Ship: {s.warehouse}</button>
+                      ))}
                       <button className="btn" onClick={() => {
                         apiFetch(`${API_URL}/orders/${selectedOrder.order_id}/generate-summary?force=true`, { method: 'POST' })
                           .then(r => r.json())
