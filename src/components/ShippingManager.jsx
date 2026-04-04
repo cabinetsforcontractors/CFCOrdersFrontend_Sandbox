@@ -1,7 +1,7 @@
 /**
- * ShippingManager.jsx v5.9.6
- * WS6: Shippo weight pre-fills from shipment.weight or order total_weight
- *      orderWeight prop added for fallback
+ * ShippingManager.jsx v5.9.7
+ * WS6: WAREHOUSE_ZIPS updated to use short codes (LI, DL, etc.) matching DB warehouse field
+ *      Both short codes and full names supported for compatibility
  */
 
 import { useState, useEffect } from 'react'
@@ -10,23 +10,30 @@ import { CustomerAddress } from './CustomerAddress'
 import { API_URL } from '../config'
 import { apiFetch } from '../api'
 
+// Keyed on BOTH short codes (what DB stores) and full names (legacy)
 const WAREHOUSE_ZIPS = {
+  // Short codes — these are what order_shipments.warehouse stores
+  'LI':               '32148',
+  'DL':               '32256',
+  'ROC':              '30071',
+  'GHI':              '34221',
+  'Go Bravura':       '77066',
+  'Love-Milestone':   '32824',
+  'Cabinet & Stone':  '77043',
+  'Cabinet & Stone CA': '90723',
+  'DuraStone':        '77037',
+  'L&C Cabinetry':    '23454',
+  'Linda':            '30110',
+  // Full names — fallback for any orders using full name
   'Liberty Industries':     '32148',
   'Cabinetry Distribution': '32148',
   'DL Cabinetry':           '32256',
   'ROC Cabinetry':          '30071',
   'GHI Cabinets':           '34221',
-  'Go Bravura':             '77066',
-  'Love-Milestone':         '32824',
   'Artisan (fallback)':     '77066',
-  'Cabinet & Stone':        '77043',
-  'Cabinet & Stone CA':     '90723',
-  'DuraStone':              '77037',
-  'L&C Cabinetry':          '23454',
   'Dealer Cabinetry':       '30110',
 }
 
-// Resolve weight from shipment or order fallback
 const resolveWeight = (shipment, customerInfo) => {
   if (shipment?.weight && parseFloat(shipment.weight) > 0) return String(parseFloat(shipment.weight))
   if (shipment?.weight_lbs && parseFloat(shipment.weight_lbs) > 0) return String(parseFloat(shipment.weight_lbs))
@@ -52,21 +59,13 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
   }
 
   const [view, setView] = useState(getInitialView())
-
-  // Pirateship
   const [psQuoteUrl, setPsQuoteUrl] = useState(shipment?.ps_quote_url || '')
   const [psQuotePrice, setPsQuotePrice] = useState(shipment?.ps_quote_price || '')
   const [psSaved, setPsSaved] = useState(!!shipment?.ps_quote_url || !!shipment?.ps_quote_price)
-
-  // Li Delivery
   const [liCost, setLiCost] = useState(shipment?.li_quote_price || '')
   const [liCharge, setLiCharge] = useState(shipment?.li_customer_price || '')
-
-  // Box Truck
   const [btCost, setBtCost] = useState(shipment?.quote_price || '')
   const [btCharge, setBtCharge] = useState(shipment?.customer_price || '')
-
-  // Shippo — weight pre-filled from shipment.weight or order total_weight
   const [shippoWeight, setShippoWeight] = useState(() => resolveWeight(shipment, customerInfo))
   const [shippoRates, setShippoRates] = useState(null)
   const [shippoLoading, setShippoLoading] = useState(false)
@@ -107,7 +106,7 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     const destZip = customerInfo?.zip || ''
 
     if (!originZip || !destZip) {
-      setShippoError(`Missing ZIP — origin: ${originZip || 'unknown'}, dest: ${destZip || 'unknown'}`)
+      setShippoError(`Missing ZIP — origin warehouse "${shipment?.warehouse}" not in ZIP map (${originZip || 'unknown'}), dest: ${destZip || 'unknown'}`)
       return
     }
     if (!shippoWeight || parseFloat(shippoWeight) <= 0) {
@@ -144,14 +143,11 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
       const params = new URLSearchParams()
       params.append('quote_price', cost)
       params.append('customer_price', cost)
-      // Also save the weight to the shipment record
       if (shippoWeight) params.append('weight', shippoWeight)
       await apiFetch(`${API_URL}/shipments/${shipment.shipment_id}?${params.toString()}`, { method: 'PATCH' })
       setShippoSaved(true)
       if (onUpdate) onUpdate()
-    } catch (err) {
-      console.error('Failed to save Shippo rate:', err)
-    }
+    } catch (err) { console.error('Failed to save Shippo rate:', err) }
   }
 
   const saveLiPricing = async () => {
@@ -193,15 +189,12 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
   const labelStyle = { display: 'block', marginBottom: '4px', fontWeight: '600', fontSize: '13px' }
   const inputGroupStyle = { marginBottom: '12px' }
 
-  // ============================================================
-  // SELECT VIEW
-  // ============================================================
   if (view === 'select') {
     return (
       <div className="shipping-manager">
-        <h3>Select Shipping Method</h3>
+        <h3 style={{ marginBottom: '4px' }}>Select Shipping Method</h3>
         <p style={{ color: 'var(--text-dim)', fontSize: '13px', marginBottom: '16px' }}>Warehouse: {shipment.warehouse}</p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginTop: '16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
           {[
             { key: 'LTL',        icon: '🚛', label: 'LTL (RL Carriers)',   sub: 'Freight shipping' },
             { key: 'Shippo',     icon: '📦', label: 'Shippo (UPS/USPS)',   sub: 'Small package auto-quote' },
@@ -222,12 +215,9 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     )
   }
 
-  // ============================================================
-  // LTL VIEW
-  // ============================================================
   if (view === 'rl') {
-    if (loading) return <div className="shipping-manager" style={{ padding: '20px', color: 'var(--text-dim)' }}>Loading RL data...</div>
-    if (!rlData) return <div className="shipping-manager"><p>Failed to load RL data</p><button className="btn" onClick={() => setView('select')}>← Back</button></div>
+    if (loading) return <div style={{ padding: '20px', color: 'var(--text-dim)' }}>Loading RL data...</div>
+    if (!rlData) return <div><p>Failed to load RL data</p><button className="btn" onClick={() => setView('select')}>← Back</button></div>
     return (
       <div className="shipping-manager">
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
@@ -239,12 +229,9 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     )
   }
 
-  // ============================================================
-  // SHIPPO VIEW
-  // ============================================================
   if (view === 'shippo') {
-    const originZip = WAREHOUSE_ZIPS[shipment?.warehouse] || '?'
-    const destZip = customerInfo?.zip || '?'
+    const originZip = WAREHOUSE_ZIPS[shipment?.warehouse] || ''
+    const destZip = customerInfo?.zip || ''
 
     return (
       <div className="shipping-manager">
@@ -254,8 +241,9 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
         </div>
 
         <div style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '6px', padding: '10px 12px', marginBottom: '16px', fontSize: '13px', display: 'flex', gap: '24px' }}>
-          <div><span style={{ color: 'var(--text-dim)' }}>From ZIP: </span><strong>{originZip}</strong></div>
-          <div><span style={{ color: 'var(--text-dim)' }}>To ZIP: </span><strong>{destZip}</strong></div>
+          <div><span style={{ color: 'var(--text-dim)' }}>From ZIP: </span><strong>{originZip || '⚠️ unknown'}</strong></div>
+          <div><span style={{ color: 'var(--text-dim)' }}>To ZIP: </span><strong>{destZip || '⚠️ unknown'}</strong></div>
+          <div style={{ color: 'var(--text-dim)', fontSize: '11px', alignSelf: 'center' }}>Warehouse: {shipment?.warehouse}</div>
         </div>
 
         <div style={inputGroupStyle}>
@@ -263,22 +251,11 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
             Weight (lbs):
             {shippoWeight && <span style={{ color: 'var(--text-dim)', fontWeight: '400', marginLeft: '6px', fontSize: '11px' }}>pre-filled from order</span>}
           </label>
-          <input
-            type="number"
-            step="0.1"
-            min="0.1"
-            value={shippoWeight}
-            onChange={e => setShippoWeight(e.target.value)}
-            placeholder="e.g. 15"
-            style={inputStyle}
-          />
+          <input type="number" step="0.1" min="0.1" value={shippoWeight} onChange={e => setShippoWeight(e.target.value)} placeholder="e.g. 15" style={inputStyle} />
         </div>
 
-        <button
-          onClick={handleGetShippoRates}
-          disabled={shippoLoading}
-          style={{ width: '100%', padding: '10px', marginBottom: '12px', backgroundColor: shippoLoading ? 'var(--border)' : 'var(--accent)', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: shippoLoading ? 'not-allowed' : 'pointer' }}
-        >
+        <button onClick={handleGetShippoRates} disabled={shippoLoading}
+          style={{ width: '100%', padding: '10px', marginBottom: '12px', backgroundColor: shippoLoading ? 'var(--border)' : 'var(--accent)', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: shippoLoading ? 'not-allowed' : 'pointer' }}>
           {shippoLoading ? '⏳ Getting Rates...' : '⚡ Get Shippo Rates'}
         </button>
 
@@ -293,8 +270,7 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
             <div style={{ marginBottom: '8px', fontSize: '12px', color: 'var(--text-dim)' }}>Select a rate:</div>
             {shippoRates.rates.map(rate => (
               <div key={rate.rate_id} onClick={() => setSelectedRate(rate)}
-                style={{ padding: '10px 12px', marginBottom: '6px', borderRadius: '6px', cursor: 'pointer', border: `2px solid ${selectedRate?.rate_id === rate.rate_id ? 'var(--accent)' : 'var(--border)'}`, background: selectedRate?.rate_id === rate.rate_id ? 'var(--accent-glow)' : 'var(--bg-raised)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-              >
+                style={{ padding: '10px 12px', marginBottom: '6px', borderRadius: '6px', cursor: 'pointer', border: `2px solid ${selectedRate?.rate_id === rate.rate_id ? 'var(--accent)' : 'var(--border)'}`, background: selectedRate?.rate_id === rate.rate_id ? 'var(--accent-glow)' : 'var(--bg-raised)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <div style={{ fontWeight: '600', fontSize: '13px' }}>{rate.provider} — {rate.service}</div>
                   {rate.estimated_days && <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>{rate.estimated_days} day{rate.estimated_days !== 1 ? 's' : ''}</div>}
@@ -302,20 +278,18 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
                 <div style={{ fontWeight: '700', color: 'var(--accent)', fontSize: '15px' }}>${rate.amount.toFixed(2)}</div>
               </div>
             ))}
-
             {selectedRate && !shippoSaved && (
               <button onClick={handleSaveShippoRate}
                 style={{ width: '100%', padding: '10px', marginTop: '8px', backgroundColor: 'var(--success)', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>
                 Save — {selectedRate.provider} {selectedRate.service} ${selectedRate.amount.toFixed(2)}
               </button>
             )}
-
             {shippoSaved && (
               <>
                 <div style={{ background: '#ECFDF5', border: '1px solid #86EFAC', borderRadius: '6px', padding: '10px', marginTop: '8px', textAlign: 'center', color: '#166534', fontWeight: '600' }}>
                   ✅ Rate saved — {selectedRate.provider} {selectedRate.service} ${selectedRate.amount.toFixed(2)}
                 </div>
-                <button onClick={handleSave} style={{ width: '100%', padding: '10px', marginTop: '8px', backgroundColor: 'var(--border-light)', color: 'var(--text)', border: 'none', borderRadius: '6px', fontSize: '14px', cursor: 'pointer' }}>Done</button>
+                <button onClick={handleSave} style={{ width: '100%', padding: '10px', marginTop: '8px', backgroundColor: 'var(--bg-hover)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px', cursor: 'pointer' }}>Done</button>
               </>
             )}
           </>
@@ -324,9 +298,6 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     )
   }
 
-  // ============================================================
-  // PIRATESHIP VIEW
-  // ============================================================
   if (view === 'pirateship') {
     return (
       <div className="shipping-manager">
@@ -349,9 +320,6 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     )
   }
 
-  // ============================================================
-  // LI DELIVERY VIEW
-  // ============================================================
   if (view === 'lidelivery') {
     return (
       <div className="shipping-manager">
@@ -370,9 +338,6 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     )
   }
 
-  // ============================================================
-  // BOX TRUCK VIEW
-  // ============================================================
   if (view === 'boxtruck') {
     return (
       <div className="shipping-manager">
@@ -390,9 +355,6 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     )
   }
 
-  // ============================================================
-  // PICKUP VIEW
-  // ============================================================
   if (view === 'tracking') {
     return (
       <div className="shipping-manager">
