@@ -1,7 +1,6 @@
 /**
- * ShippingManager.jsx v5.9.7
- * WS6: WAREHOUSE_ZIPS updated to use short codes (LI, DL, etc.) matching DB warehouse field
- *      Both short codes and full names supported for compatibility
+ * ShippingManager.jsx v5.9.8
+ * WS6: Added Manual shipping override — free-form cost/charge, saves to quote_price + customer_price
  */
 
 import { useState, useEffect } from 'react'
@@ -10,9 +9,7 @@ import { CustomerAddress } from './CustomerAddress'
 import { API_URL } from '../config'
 import { apiFetch } from '../api'
 
-// Keyed on BOTH short codes (what DB stores) and full names (legacy)
 const WAREHOUSE_ZIPS = {
-  // Short codes — these are what order_shipments.warehouse stores
   'LI':               '32148',
   'DL':               '32256',
   'ROC':              '30071',
@@ -24,13 +21,11 @@ const WAREHOUSE_ZIPS = {
   'DuraStone':        '77037',
   'L&C Cabinetry':    '23454',
   'Linda':            '30110',
-  // Full names — fallback for any orders using full name
   'Liberty Industries':     '32148',
   'Cabinetry Distribution': '32148',
   'DL Cabinetry':           '32256',
   'ROC Cabinetry':          '30071',
   'GHI Cabinets':           '34221',
-  'Artisan (fallback)':     '77066',
   'Dealer Cabinetry':       '30110',
 }
 
@@ -55,17 +50,31 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     if (m === 'LiDelivery') return 'lidelivery'
     if (m === 'BoxTruck') return 'boxtruck'
     if (m === 'Pickup') return 'tracking'
+    if (m === 'Manual') return 'manual'
     return 'select'
   }
 
   const [view, setView] = useState(getInitialView())
+
+  // Pirateship
   const [psQuoteUrl, setPsQuoteUrl] = useState(shipment?.ps_quote_url || '')
   const [psQuotePrice, setPsQuotePrice] = useState(shipment?.ps_quote_price || '')
   const [psSaved, setPsSaved] = useState(!!shipment?.ps_quote_url || !!shipment?.ps_quote_price)
+
+  // Li Delivery
   const [liCost, setLiCost] = useState(shipment?.li_quote_price || '')
   const [liCharge, setLiCharge] = useState(shipment?.li_customer_price || '')
+
+  // Box Truck
   const [btCost, setBtCost] = useState(shipment?.quote_price || '')
   const [btCharge, setBtCharge] = useState(shipment?.customer_price || '')
+
+  // Manual override
+  const [manualCost, setManualCost] = useState(shipment?.quote_price || '')
+  const [manualCharge, setManualCharge] = useState(shipment?.customer_price || '')
+  const [manualNote, setManualNote] = useState('')
+
+  // Shippo
   const [shippoWeight, setShippoWeight] = useState(() => resolveWeight(shipment, customerInfo))
   const [shippoRates, setShippoRates] = useState(null)
   const [shippoLoading, setShippoLoading] = useState(false)
@@ -96,6 +105,7 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     else if (newMethod === 'LiDelivery') setView('lidelivery')
     else if (newMethod === 'BoxTruck') setView('boxtruck')
     else if (newMethod === 'Pickup') setView('tracking')
+    else if (newMethod === 'Manual') setView('manual')
     else setView('select')
   }
 
@@ -104,35 +114,15 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
   const handleGetShippoRates = async () => {
     const originZip = WAREHOUSE_ZIPS[shipment?.warehouse] || ''
     const destZip = customerInfo?.zip || ''
-
-    if (!originZip || !destZip) {
-      setShippoError(`Missing ZIP — origin warehouse "${shipment?.warehouse}" not in ZIP map (${originZip || 'unknown'}), dest: ${destZip || 'unknown'}`)
-      return
-    }
-    if (!shippoWeight || parseFloat(shippoWeight) <= 0) {
-      setShippoError('Enter a weight to get rates')
-      return
-    }
-
-    setShippoLoading(true)
-    setShippoError(null)
-    setShippoRates(null)
-    setSelectedRate(null)
-
+    if (!originZip || !destZip) { setShippoError(`Missing ZIP — origin warehouse "${shipment?.warehouse}" not in ZIP map, dest: ${destZip || 'unknown'}`); return }
+    if (!shippoWeight || parseFloat(shippoWeight) <= 0) { setShippoError('Enter a weight to get rates'); return }
+    setShippoLoading(true); setShippoError(null); setShippoRates(null); setSelectedRate(null)
     try {
-      const res = await apiFetch(
-        `${API_URL}/shippo/rates?origin_zip=${originZip}&dest_zip=${destZip}&weight_lbs=${shippoWeight}&is_residential=true`
-      )
+      const res = await apiFetch(`${API_URL}/shippo/rates?origin_zip=${originZip}&dest_zip=${destZip}&weight_lbs=${shippoWeight}&is_residential=true`)
       const data = await res.json()
-      if (data.success && data.rates?.length > 0) {
-        setShippoRates(data)
-        setSelectedRate(data.cheapest)
-      } else {
-        setShippoError(data.error || 'No rates returned from Shippo')
-      }
-    } catch (err) {
-      setShippoError('Failed to get Shippo rates: ' + err.message)
-    }
+      if (data.success && data.rates?.length > 0) { setShippoRates(data); setSelectedRate(data.cheapest) }
+      else setShippoError(data.error || 'No rates returned from Shippo')
+    } catch (err) { setShippoError('Failed to get Shippo rates: ' + err.message) }
     setShippoLoading(false)
   }
 
@@ -170,6 +160,16 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     } catch (err) { console.error('Failed to save Box Truck pricing:', err) }
   }
 
+  const saveManualPricing = async () => {
+    try {
+      const params = new URLSearchParams()
+      if (manualCost) params.append('quote_price', manualCost)
+      if (manualCharge) params.append('customer_price', manualCharge)
+      await apiFetch(`${API_URL}/shipments/${shipment.shipment_id}?${params.toString()}`, { method: 'PATCH' })
+      if (onUpdate) onUpdate(); onClose()
+    } catch (err) { console.error('Failed to save manual pricing:', err) }
+  }
+
   const savePirateshipQuote = async () => {
     try {
       const params = new URLSearchParams()
@@ -189,6 +189,9 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
   const labelStyle = { display: 'block', marginBottom: '4px', fontWeight: '600', fontSize: '13px' }
   const inputGroupStyle = { marginBottom: '12px' }
 
+  // ============================================================
+  // SELECT VIEW
+  // ============================================================
   if (view === 'select') {
     return (
       <div className="shipping-manager">
@@ -196,12 +199,13 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
         <p style={{ color: 'var(--text-dim)', fontSize: '13px', marginBottom: '16px' }}>Warehouse: {shipment.warehouse}</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
           {[
-            { key: 'LTL',        icon: '🚛', label: 'LTL (RL Carriers)',   sub: 'Freight shipping' },
-            { key: 'Shippo',     icon: '📦', label: 'Shippo (UPS/USPS)',   sub: 'Small package auto-quote' },
-            { key: 'Pirateship', icon: '🏴', label: 'Pirateship',          sub: 'UPS/USPS parcels' },
-            { key: 'BoxTruck',   icon: '🚚', label: 'Box Truck',           sub: 'Local delivery' },
-            { key: 'Pickup',     icon: '🏪', label: 'Pickup',              sub: 'Customer picks up' },
-            { key: 'LiDelivery', icon: '🚐', label: 'Li Delivery',         sub: 'Li handles shipping' },
+            { key: 'LTL',        icon: '🚛', label: 'LTL (RL Carriers)',    sub: 'Freight shipping' },
+            { key: 'Shippo',     icon: '📦', label: 'Shippo (UPS/USPS)',    sub: 'Small package auto-quote' },
+            { key: 'Pirateship', icon: '🏴', label: 'Pirateship',           sub: 'UPS/USPS parcels' },
+            { key: 'BoxTruck',   icon: '🚚', label: 'Box Truck',            sub: 'Local delivery' },
+            { key: 'Pickup',     icon: '🏪', label: 'Pickup',               sub: 'Customer picks up' },
+            { key: 'LiDelivery', icon: '🚐', label: 'Li Delivery',          sub: 'Li handles shipping' },
+            { key: 'Manual',     icon: '✏️',  label: 'Manual Override',      sub: 'Enter cost/charge directly' },
           ].map(m => (
             <button key={m.key} onClick={() => handleMethodChange(m.key)}
               style={{ padding: '12px', borderRadius: '8px', border: `2px solid ${method === m.key ? 'var(--accent)' : 'var(--border)'}`, cursor: 'pointer', textAlign: 'left', backgroundColor: method === m.key ? 'var(--accent-glow)' : 'var(--bg-raised)' }}>
@@ -215,6 +219,9 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     )
   }
 
+  // ============================================================
+  // LTL VIEW
+  // ============================================================
   if (view === 'rl') {
     if (loading) return <div style={{ padding: '20px', color: 'var(--text-dim)' }}>Loading RL data...</div>
     if (!rlData) return <div><p>Failed to load RL data</p><button className="btn" onClick={() => setView('select')}>← Back</button></div>
@@ -229,42 +236,32 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     )
   }
 
+  // ============================================================
+  // SHIPPO VIEW
+  // ============================================================
   if (view === 'shippo') {
     const originZip = WAREHOUSE_ZIPS[shipment?.warehouse] || ''
     const destZip = customerInfo?.zip || ''
-
     return (
       <div className="shipping-manager">
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
           <button className="btn btn-sm" onClick={() => setView('select')}>← Change Method</button>
           <span style={{ fontWeight: '600' }}>Shippo (UPS / USPS)</span>
         </div>
-
         <div style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '6px', padding: '10px 12px', marginBottom: '16px', fontSize: '13px', display: 'flex', gap: '24px' }}>
           <div><span style={{ color: 'var(--text-dim)' }}>From ZIP: </span><strong>{originZip || '⚠️ unknown'}</strong></div>
           <div><span style={{ color: 'var(--text-dim)' }}>To ZIP: </span><strong>{destZip || '⚠️ unknown'}</strong></div>
           <div style={{ color: 'var(--text-dim)', fontSize: '11px', alignSelf: 'center' }}>Warehouse: {shipment?.warehouse}</div>
         </div>
-
         <div style={inputGroupStyle}>
-          <label style={labelStyle}>
-            Weight (lbs):
-            {shippoWeight && <span style={{ color: 'var(--text-dim)', fontWeight: '400', marginLeft: '6px', fontSize: '11px' }}>pre-filled from order</span>}
-          </label>
+          <label style={labelStyle}>Weight (lbs): {shippoWeight && <span style={{ color: 'var(--text-dim)', fontWeight: '400', marginLeft: '6px', fontSize: '11px' }}>pre-filled from order</span>}</label>
           <input type="number" step="0.1" min="0.1" value={shippoWeight} onChange={e => setShippoWeight(e.target.value)} placeholder="e.g. 15" style={inputStyle} />
         </div>
-
         <button onClick={handleGetShippoRates} disabled={shippoLoading}
           style={{ width: '100%', padding: '10px', marginBottom: '12px', backgroundColor: shippoLoading ? 'var(--border)' : 'var(--accent)', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: shippoLoading ? 'not-allowed' : 'pointer' }}>
           {shippoLoading ? '⏳ Getting Rates...' : '⚡ Get Shippo Rates'}
         </button>
-
-        {shippoError && (
-          <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: '6px', padding: '10px', marginBottom: '12px', fontSize: '13px', color: '#92400E' }}>
-            ⚠️ {shippoError}
-          </div>
-        )}
-
+        {shippoError && <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: '6px', padding: '10px', marginBottom: '12px', fontSize: '13px', color: '#92400E' }}>⚠️ {shippoError}</div>}
         {shippoRates && (
           <>
             <div style={{ marginBottom: '8px', fontSize: '12px', color: 'var(--text-dim)' }}>Select a rate:</div>
@@ -279,8 +276,7 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
               </div>
             ))}
             {selectedRate && !shippoSaved && (
-              <button onClick={handleSaveShippoRate}
-                style={{ width: '100%', padding: '10px', marginTop: '8px', backgroundColor: 'var(--success)', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>
+              <button onClick={handleSaveShippoRate} style={{ width: '100%', padding: '10px', marginTop: '8px', backgroundColor: 'var(--success)', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>
                 Save — {selectedRate.provider} {selectedRate.service} ${selectedRate.amount.toFixed(2)}
               </button>
             )}
@@ -298,6 +294,9 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     )
   }
 
+  // ============================================================
+  // PIRATESHIP VIEW
+  // ============================================================
   if (view === 'pirateship') {
     return (
       <div className="shipping-manager">
@@ -320,6 +319,9 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     )
   }
 
+  // ============================================================
+  // LI DELIVERY VIEW
+  // ============================================================
   if (view === 'lidelivery') {
     return (
       <div className="shipping-manager">
@@ -338,6 +340,9 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     )
   }
 
+  // ============================================================
+  // BOX TRUCK VIEW
+  // ============================================================
   if (view === 'boxtruck') {
     return (
       <div className="shipping-manager">
@@ -355,6 +360,53 @@ const ShippingManager = ({ shipment, orderId, customerInfo, onClose, onUpdate })
     )
   }
 
+  // ============================================================
+  // MANUAL OVERRIDE VIEW
+  // ============================================================
+  if (view === 'manual') {
+    const profit = parseFloat(manualCharge || 0) - parseFloat(manualCost || 0)
+    return (
+      <div className="shipping-manager">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+          <button className="btn btn-sm" onClick={() => setView('select')}>← Change Method</button>
+          <span style={{ fontWeight: '600' }}>Manual Shipping Override</span>
+        </div>
+        <p style={{ color: 'var(--text-dim)', fontSize: '13px', marginBottom: '16px' }}>
+          Enter actual cost and what you're charging the customer. Bypasses all auto-quote logic.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div style={inputGroupStyle}>
+            <label style={labelStyle}>Our Cost ($):</label>
+            <input type="number" step="0.01" min="0" value={manualCost} onChange={e => setManualCost(e.target.value)} placeholder="0.00" style={inputStyle} autoFocus />
+          </div>
+          <div style={inputGroupStyle}>
+            <label style={labelStyle}>Customer Charge ($):</label>
+            <input type="number" step="0.01" min="0" value={manualCharge} onChange={e => setManualCharge(e.target.value)} placeholder="0.00" style={inputStyle} />
+          </div>
+        </div>
+        <div style={inputGroupStyle}>
+          <label style={labelStyle}>Note (optional):</label>
+          <input type="text" value={manualNote} onChange={e => setManualNote(e.target.value)} placeholder="e.g. Local pickup arranged, flat rate negotiated" style={inputStyle} />
+        </div>
+        {manualCost && manualCharge && (
+          <div style={{ background: profit >= 0 ? '#ECFDF5' : '#FEF2F2', border: `1px solid ${profit >= 0 ? '#86EFAC' : '#FCA5A5'}`, borderRadius: '6px', padding: '10px 12px', marginBottom: '12px', fontSize: '13px', color: profit >= 0 ? '#166534' : '#991B1B', fontWeight: '600' }}>
+            Profit: {profit >= 0 ? '+' : ''}${profit.toFixed(2)}
+          </div>
+        )}
+        <button
+          onClick={saveManualPricing}
+          disabled={!manualCost && !manualCharge}
+          className="btn btn-primary"
+          style={{ width: '100%', opacity: (!manualCost && !manualCharge) ? 0.5 : 1 }}>
+          Save Manual Pricing
+        </button>
+      </div>
+    )
+  }
+
+  // ============================================================
+  // PICKUP VIEW
+  // ============================================================
   if (view === 'tracking') {
     return (
       <div className="shipping-manager">
