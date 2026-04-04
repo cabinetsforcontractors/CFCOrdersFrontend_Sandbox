@@ -1,7 +1,6 @@
 /**
  * App.jsx - CFC Orders Dashboard
- * v7.3.0 - Notes inline, customer comments, ShipmentRow inline, profit tracking,
- *           AI summary on Details tab, alert backgrounds + labels, light theme
+ * v7.3.1 - Add orderWeight to openShippingManager so Shippo pre-fills weight
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
@@ -41,8 +40,8 @@ const ALERT_TYPE_LABELS = {
   out_of_stock:             '\u26a0\ufe0f OUT OF STOCK',
   backorder:                '\u26a0\ufe0f BACKORDER',
   inventory_issue:          '\u26a0\ufe0f INVENTORY ISSUE',
-  no_action_after_payment:  '\u23f0 NO ACTION — PAID',
-  shipped_no_payment:       '\ud83d\udcb0 SHIPPED — NO PAYMENT',
+  no_action_after_payment:  '\u23f0 NO ACTION \u2014 PAID',
+  shipped_no_payment:       '\ud83d\udcb0 SHIPPED \u2014 NO PAYMENT',
   no_response:              '\ud83d\udce7 NO WAREHOUSE RESPONSE',
   not_available:            '\u26a0\ufe0f NOT AVAILABLE',
   discontinued:             '\u26a0\ufe0f DISCONTINUED',
@@ -63,7 +62,6 @@ const formatAddress = (o) => {
   return parts.join(', ')
 }
 
-// Calculate shipping totals + profit for an order
 const getShippingTotals = (order) => {
   return (order.shipments || []).reduce((acc, s) => {
     const charge = Number(s.rl_customer_price) || Number(s.li_customer_price) || Number(s.customer_price) || Number(s.ps_quote_price) || 0
@@ -101,46 +99,25 @@ function App() {
   const [emailOrder, setEmailOrder] = useState(null)
   const [brainOpen, setBrainOpen] = useState(false)
 
-  // Invoice / resend state
   const [invoiceUrl, setInvoiceUrl] = useState(null)
   const [resendingInvoice, setResendingInvoice] = useState(false)
   const [invoiceCopied, setInvoiceCopied] = useState(false)
 
-  // Notes inline editing (detail panel)
   const [notesDraft, setNotesDraft] = useState('')
   const [isEditingNotes, setIsEditingNotes] = useState(false)
   const [isSavingNotes, setIsSavingNotes] = useState(false)
 
-  useEffect(() => {
-    if (localStorage.getItem('cfc_logged_in') === 'true') setIsLoggedIn(true)
-  }, [])
-
-  useEffect(() => {
-    if (isLoggedIn) { loadOrders(); loadAlertSummary(); loadLifecycleSummary() }
-  }, [isLoggedIn])
-
-  // Reset notes state when selected order changes
-  useEffect(() => {
-    setNotesDraft(selectedOrder?.notes || '')
-    setIsEditingNotes(false)
-    setIsSavingNotes(false)
-  }, [selectedOrder?.order_id])
+  useEffect(() => { if (localStorage.getItem('cfc_logged_in') === 'true') setIsLoggedIn(true) }, [])
+  useEffect(() => { if (isLoggedIn) { loadOrders(); loadAlertSummary(); loadLifecycleSummary() } }, [isLoggedIn])
+  useEffect(() => { setNotesDraft(selectedOrder?.notes || ''); setIsEditingNotes(false); setIsSavingNotes(false) }, [selectedOrder?.order_id])
 
   const handleLogin = (e) => {
     e.preventDefault()
-    if (password === APP_PASSWORD) {
-      setIsLoggedIn(true)
-      localStorage.setItem('cfc_logged_in', 'true')
-      setLoginError('')
-    } else {
-      setLoginError('Incorrect password')
-    }
+    if (password === APP_PASSWORD) { setIsLoggedIn(true); localStorage.setItem('cfc_logged_in', 'true'); setLoginError('') }
+    else setLoginError('Incorrect password')
   }
 
-  const handleLogout = () => {
-    setIsLoggedIn(false)
-    localStorage.removeItem('cfc_logged_in')
-  }
+  const handleLogout = () => { setIsLoggedIn(false); localStorage.removeItem('cfc_logged_in') }
 
   const loadOrders = useCallback(async () => {
     setLoading(true)
@@ -157,7 +134,7 @@ function App() {
       const res = await apiFetch(`${API_URL}/lifecycle/summary`)
       const data = await res.json()
       if (data.success !== false) setLifecycleSummary({ active: data.active || 0, inactive: data.inactive || 0, canceled: data.canceled || 0, total: data.total || 0 })
-    } catch (err) { console.log('Lifecycle summary not available:', err.message) }
+    } catch (err) { console.log('Lifecycle summary not available') }
   }, [])
 
   const loadAlertSummary = useCallback(async () => {
@@ -191,7 +168,7 @@ function App() {
       const res = await apiFetch(`${API_URL}/alerts/${alertId}/resolve`, { method: 'POST' })
       const data = await res.json()
       if (data.success) { loadAllAlerts(); loadAlertSummary(); if (selectedOrder) loadOrderAlerts(selectedOrder.order_id) }
-    } catch (err) { console.error('Failed to resolve alert:', err) }
+    } catch (err) { console.error(err) }
   }
 
   const runAlertCheck = async () => {
@@ -200,7 +177,7 @@ function App() {
       const res = await apiFetch(`${API_URL}/alerts/check-all`, { method: 'POST' })
       const data = await res.json()
       if (data.success) { loadAllAlerts(); loadAlertSummary() }
-    } catch (err) { console.error('Failed to run alert check:', err) }
+    } catch (err) { console.error(err) }
     setCheckingAlerts(false)
   }
 
@@ -212,7 +189,6 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [alertsOpen])
 
-  // Notes save — also triggers AI summary refresh
   const handleSaveNotes = async () => {
     if (!selectedOrder) return
     setIsSavingNotes(true)
@@ -222,7 +198,6 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes: notesDraft })
       })
-      // Refresh AI summary after note change
       apiFetch(`${API_URL}/orders/${selectedOrder.order_id}/generate-summary?force=true`, { method: 'POST' }).catch(() => {})
       setIsEditingNotes(false)
       setSelectedOrder(prev => ({ ...prev, notes: notesDraft }))
@@ -231,7 +206,6 @@ function App() {
     setIsSavingNotes(false)
   }
 
-  // Invoice resend
   const handleResendInvoice = async () => {
     if (!selectedOrder) return
     setResendingInvoice(true)
@@ -244,7 +218,7 @@ function App() {
       })
       const data = await res.json()
       if (data.checkout_url) setInvoiceUrl(data.checkout_url)
-    } catch (err) { console.error('Failed to resend invoice:', err) }
+    } catch (err) { console.error(err) }
     setResendingInvoice(false)
   }
 
@@ -340,6 +314,7 @@ function App() {
     setSummaryLoading(false)
   }
 
+  // openShippingManager — passes orderWeight so Shippo can pre-fill weight
   const openShippingManager = (shipment, order) => {
     setShippingModal({
       shipment,
@@ -351,7 +326,8 @@ function App() {
         state: order?.state || '',
         zip: order?.zip_code || '',
         phone: order?.phone || '',
-        email: order?.email || ''
+        email: order?.email || '',
+        orderWeight: order?.total_weight || ''   // passed to ShippingManager for Shippo weight pre-fill
       }
     })
   }
@@ -422,7 +398,7 @@ function App() {
                   {alertsLoading ? (
                     <div className="alerts-loading">Loading alerts...</div>
                   ) : allAlerts.length === 0 ? (
-                    <div className="alerts-empty"><span style={{ fontSize: '24px' }}>&#x2705;</span><span>All clear — no unresolved alerts</span></div>
+                    <div className="alerts-empty"><span style={{ fontSize: '24px' }}>&#x2705;</span><span>All clear</span></div>
                   ) : (
                     Object.entries(alertsByType).map(([type, alerts]) => {
                       const meta = ALERT_LABELS[type] || { label: type, icon: '\u26a0\ufe0f' }
@@ -440,7 +416,7 @@ function App() {
                                 <span className="alert-message">{alert.alert_message}</span>
                                 <span className="alert-time">{fmtDateTime(alert.created_at)}</span>
                               </div>
-                              <button className="alert-resolve-btn" onClick={(e) => { e.stopPropagation(); resolveAlert(alert.id) }} title="Resolve">&#x2713;</button>
+                              <button className="alert-resolve-btn" onClick={(e) => { e.stopPropagation(); resolveAlert(alert.id) }}>&#x2713;</button>
                             </div>
                           ))}
                         </div>
@@ -456,19 +432,15 @@ function App() {
             style={{ background: brainOpen ? 'rgba(124,58,237,0.12)' : undefined, borderColor: brainOpen ? '#7c3aed' : undefined, color: brainOpen ? '#7c3aed' : undefined }}>
             &#x1F9E0; Brain
           </button>
-
-          <button onClick={() => window.open('/sort_order_review.html', '_blank')} title="WS17 Sort Order Review"
+          <button onClick={() => window.open('/sort_order_review.html', '_blank')}
             style={{ background: 'rgba(5,150,105,0.08)', borderColor: 'rgba(5,150,105,0.3)', color: '#059669' }}>
             &#x1F4CA; Sort Review
           </button>
-
           <button onClick={() => window.open(OTHER_ENV_URL, '_blank')}
             style={{ background: IS_SANDBOX ? 'rgba(5,150,105,0.08)' : 'rgba(217,119,6,0.08)', borderColor: IS_SANDBOX ? 'rgba(5,150,105,0.3)' : 'rgba(217,119,6,0.3)', color: IS_SANDBOX ? 'var(--success)' : 'var(--warning)' }}>
             {IS_SANDBOX ? '\u{1F7E2} Open Live' : '\u{1F9EA} Open Sandbox'}
           </button>
-          <button onClick={() => { loadOrders(); loadAlertSummary(); loadLifecycleSummary() }} disabled={loading}>
-            {loading ? '...' : '\u{21BB} Refresh'}
-          </button>
+          <button onClick={() => { loadOrders(); loadAlertSummary(); loadLifecycleSummary() }} disabled={loading}>{loading ? '...' : '\u{21BB} Refresh'}</button>
           <button onClick={handleLogout}>Logout</button>
         </div>
       </header>
@@ -566,8 +538,8 @@ function App() {
                         <div className="customer-name">{order.company_name || order.customer_name || '\u2014'}</div>
                         {order.city && <div className="customer-company">{order.city}{order.state ? `, ${order.state}` : ''}</div>}
                         {order.comments && (
-                          <div className="comments-block" style={{ marginTop: '4px' }}>
-                            <strong>Customer:</strong> {order.comments.length > 80 ? order.comments.slice(0, 80) + '…' : order.comments}
+                          <div className="comments-block">
+                            <strong>Customer:</strong> {order.comments.length > 80 ? order.comments.slice(0, 80) + '\u2026' : order.comments}
                           </div>
                         )}
                       </td>
@@ -631,7 +603,6 @@ function App() {
               <div className="panel-content">
                 {panelTab === 'details' && (
                   <>
-                    {/* Alert section */}
                     {orderAlerts.length > 0 && (
                       <div className="detail-section order-alerts-section">
                         <h4>&#x26A0;&#xFE0F; Active Alerts ({orderAlerts.length})</h4>
@@ -651,7 +622,6 @@ function App() {
                       </div>
                     )}
 
-                    {/* Lifecycle warning */}
                     {(selectedOrder.lifecycle_status === 'inactive' || selectedOrder.lifecycle_status === 'canceled') && (
                       <div className="detail-section" style={{ background: selectedOrder.lifecycle_status === 'canceled' ? 'rgba(220,38,38,0.06)' : 'rgba(217,119,6,0.06)', border: `1px solid ${selectedOrder.lifecycle_status === 'canceled' ? 'rgba(220,38,38,0.25)' : 'rgba(217,119,6,0.25)'}`, borderRadius: '8px', padding: '12px' }}>
                         <h4 style={{ color: selectedOrder.lifecycle_status === 'canceled' ? '#DC2626' : '#D97706', margin: '0 0 8px 0' }}>
@@ -662,13 +632,9 @@ function App() {
                             {selectedOrder.lifecycle_status === 'inactive' ? `Will be canceled: ${fmtDate(selectedOrder.lifecycle_deadline_at)}` : `Canceled: ${fmtDate(selectedOrder.completed_at || selectedOrder.lifecycle_deadline_at)}`}
                           </div>
                         )}
-                        {selectedOrder.last_customer_email_at && (
-                          <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px' }}>Last customer email: {fmtDate(selectedOrder.last_customer_email_at)}</div>
-                        )}
                       </div>
                     )}
 
-                    {/* Customer comments */}
                     {selectedOrder.comments && (
                       <div className="detail-section">
                         <h4>Customer Comments</h4>
@@ -678,7 +644,6 @@ function App() {
                       </div>
                     )}
 
-                    {/* Customer info */}
                     <div className="detail-section">
                       <h4>Customer</h4>
                       <div className="detail-row"><span className="detail-label">Company</span><span className="detail-value">{selectedOrder.company_name || selectedOrder.customer_name || '\u2014'}</span></div>
@@ -687,7 +652,6 @@ function App() {
                       <div className="detail-row"><span className="detail-label">Address</span><span className="detail-value">{formatAddress(selectedOrder) || '\u2014'}</span></div>
                     </div>
 
-                    {/* Order info */}
                     <div className="detail-section">
                       <h4>Order Info</h4>
                       <div className="detail-row">
@@ -702,7 +666,7 @@ function App() {
                       <div className="detail-row">
                         <span className="detail-label">Payment</span>
                         <span className="detail-value" style={{ color: selectedOrder.payment_received ? 'var(--success)' : 'var(--text-dim)' }}>
-                          {selectedOrder.payment_received ? '✅ Received' : '⏳ Pending'}
+                          {selectedOrder.payment_received ? '\u2705 Received' : '\u23f3 Pending'}
                         </span>
                       </div>
                       {selectedOrder.payment_received && selectedOrder.payment_amount && (
@@ -713,23 +677,15 @@ function App() {
                       )}
                     </div>
 
-                    {/* Shipments */}
                     {selectedOrder.shipments?.length > 0 && (
                       <div className="detail-section">
                         <h4>Shipments</h4>
                         {selectedOrder.shipments.map((s, i) => (
-                          <ShipmentRow
-                            key={s.shipment_id || i}
-                            shipment={s}
-                            order={selectedOrder}
-                            onOpenShippingManager={openShippingManager}
-                            onUpdate={loadOrders}
-                          />
+                          <ShipmentRow key={s.shipment_id || i} shipment={s} order={selectedOrder} onOpenShippingManager={openShippingManager} onUpdate={loadOrders} />
                         ))}
                       </div>
                     )}
 
-                    {/* Notes */}
                     <div className="detail-section">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                         <h4 style={{ margin: 0 }}>Internal Notes</h4>
@@ -741,50 +697,35 @@ function App() {
                       </div>
                       {isEditingNotes ? (
                         <div style={{ background: '#FAF5FF', border: '1px solid #D8B4FE', borderRadius: '8px', padding: '10px' }}>
-                          <textarea
-                            value={notesDraft}
-                            onChange={e => setNotesDraft(e.target.value)}
-                            placeholder="Add internal notes..."
-                            rows={4}
-                            style={{ width: '100%', padding: '6px 8px', border: '1px solid #D8B4FE', borderRadius: '6px', background: '#fff', color: 'var(--text)', fontFamily: 'inherit', fontSize: '13px', resize: 'vertical', outline: 'none', marginBottom: '8px' }}
-                          />
+                          <textarea value={notesDraft} onChange={e => setNotesDraft(e.target.value)} placeholder="Add internal notes..." rows={4}
+                            style={{ width: '100%', padding: '6px 8px', border: '1px solid #D8B4FE', borderRadius: '6px', background: '#fff', color: 'var(--text)', fontFamily: 'inherit', fontSize: '13px', resize: 'vertical', outline: 'none', marginBottom: '8px' }} />
                           <div style={{ display: 'flex', gap: '6px' }}>
-                            <button className="btn btn-sm btn-primary" onClick={handleSaveNotes} disabled={isSavingNotes}>
-                              {isSavingNotes ? 'Saving...' : 'Save'}
-                            </button>
-                            <button className="btn btn-sm" onClick={() => { setIsEditingNotes(false); setNotesDraft(selectedOrder.notes || '') }}>
-                              Cancel
-                            </button>
+                            <button className="btn btn-sm btn-primary" onClick={handleSaveNotes} disabled={isSavingNotes}>{isSavingNotes ? 'Saving...' : 'Save'}</button>
+                            <button className="btn btn-sm" onClick={() => { setIsEditingNotes(false); setNotesDraft(selectedOrder.notes || '') }}>Cancel</button>
                           </div>
                         </div>
                       ) : selectedOrder.notes ? (
-                        <div style={{ background: '#FAF5FF', border: '1px solid #E9D5FF', borderRadius: '8px', padding: '10px', fontSize: '13px', color: 'var(--text)', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>
-                          {selectedOrder.notes}
-                        </div>
+                        <div style={{ background: '#FAF5FF', border: '1px solid #E9D5FF', borderRadius: '8px', padding: '10px', fontSize: '13px', color: 'var(--text)', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>{selectedOrder.notes}</div>
                       ) : (
                         <div style={{ color: 'var(--text-muted)', fontSize: '13px', fontStyle: 'italic' }}>No notes yet</div>
                       )}
                     </div>
 
-                    {/* AI Summary snippet */}
                     {selectedOrder.ai_summary && (
                       <div className="detail-section">
                         <h4>AI Summary</h4>
-                        <div style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderLeft: '3px solid var(--accent)', borderRadius: '0 6px 6px 0', padding: '10px 12px', fontSize: '12px', color: 'var(--text-dim)', lineHeight: '1.6', whiteSpace: 'pre-wrap', maxHeight: '120px', overflow: 'hidden', position: 'relative' }}>
-                          {selectedOrder.ai_summary.slice(0, 300)}{selectedOrder.ai_summary.length > 300 ? '…' : ''}
+                        <div style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderLeft: '3px solid var(--accent)', borderRadius: '0 6px 6px 0', padding: '10px 12px', fontSize: '12px', color: 'var(--text-dim)', lineHeight: '1.6', whiteSpace: 'pre-wrap', maxHeight: '120px', overflow: 'hidden' }}>
+                          {selectedOrder.ai_summary.slice(0, 300)}{selectedOrder.ai_summary.length > 300 ? '\u2026' : ''}
                         </div>
-                        <button className="btn btn-sm" style={{ marginTop: '6px', fontSize: '11px' }} onClick={() => setPanelTab('ai')}>View full AI analysis →</button>
+                        <button className="btn btn-sm" style={{ marginTop: '6px', fontSize: '11px' }} onClick={() => setPanelTab('ai')}>View full AI analysis \u2192</button>
                       </div>
                     )}
 
-                    {/* Change status */}
                     <div className="detail-section">
                       <h4>Change Status</h4>
-                      <select
-                        value={selectedOrder.current_status}
+                      <select value={selectedOrder.current_status}
                         onChange={e => { updateStatus(selectedOrder.order_id, e.target.value); setSelectedOrder({ ...selectedOrder, current_status: e.target.value }) }}
-                        style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text)', fontFamily: 'inherit', fontSize: '13px' }}
-                      >
+                        style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text)', fontFamily: 'inherit', fontSize: '13px' }}>
                         {STATUSES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
                       </select>
                     </div>
@@ -795,9 +736,7 @@ function App() {
                   <div className="detail-section">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                       <h4 style={{ margin: 0 }}>AI Analysis</h4>
-                      <button className="btn btn-primary btn-sm" onClick={generateSummary} disabled={summaryLoading}>
-                        {summaryLoading ? 'Generating...' : 'Generate Summary'}
-                      </button>
+                      <button className="btn btn-primary btn-sm" onClick={generateSummary} disabled={summaryLoading}>{summaryLoading ? 'Generating...' : 'Generate Summary'}</button>
                     </div>
                     <div style={{ background: 'var(--bg-input)', borderRadius: '8px', padding: '16px', minHeight: '200px', border: '1px solid var(--border)' }}>
                       {summaryLoading ? (
@@ -810,9 +749,7 @@ function App() {
                       ) : selectedOrder.ai_summary ? (
                         <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6', fontSize: '13px', color: 'var(--text)' }}>{selectedOrder.ai_summary}</div>
                       ) : (
-                        <div style={{ textAlign: 'center', paddingTop: '50px', color: 'var(--text-muted)', fontSize: '13px', lineHeight: '1.8' }}>
-                          Click "Generate Summary" for a comprehensive<br />AI analysis of this order.
-                        </div>
+                        <div style={{ textAlign: 'center', paddingTop: '50px', color: 'var(--text-muted)', fontSize: '13px', lineHeight: '1.8' }}>Click "Generate Summary" for a comprehensive AI analysis.</div>
                       )}
                     </div>
                   </div>
@@ -823,22 +760,18 @@ function App() {
                     <h4>Quick Actions</h4>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       <button className="btn" onClick={() => setEmailOrder(selectedOrder)}>&#x2709; Send Email</button>
-
-                      <button className="btn" onClick={handleResendInvoice} disabled={resendingInvoice}
-                        style={{ borderColor: '#6366f1', color: '#6366f1' }}>
-                        {resendingInvoice ? '⏳ Sending Invoice...' : '📄 Send Invoice + PDF'}
+                      <button className="btn" onClick={handleResendInvoice} disabled={resendingInvoice} style={{ borderColor: '#6366f1', color: '#6366f1' }}>
+                        {resendingInvoice ? '\u23f3 Sending Invoice...' : '\ud83d\udcc4 Send Invoice + PDF'}
                       </button>
-
                       {invoiceUrl && (
                         <div style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '6px', padding: '10px 12px', fontSize: '12px' }}>
                           <div style={{ color: 'var(--text-dim)', marginBottom: '6px' }}>Invoice / Checkout URL:</div>
                           <div style={{ wordBreak: 'break-all', color: 'var(--text)', marginBottom: '8px', fontFamily: 'monospace', fontSize: '11px' }}>{invoiceUrl}</div>
                           <button className="btn btn-sm" onClick={handleCopyInvoiceUrl} style={{ borderColor: 'var(--success)', color: invoiceCopied ? 'var(--success)' : undefined }}>
-                            {invoiceCopied ? '✅ Copied!' : '📋 Copy Link'}
+                            {invoiceCopied ? '\u2705 Copied!' : '\ud83d\udccb Copy Link'}
                           </button>
                         </div>
                       )}
-
                       {selectedOrder.shipments?.length > 0 && (
                         <button className="btn" onClick={() => openShippingManager(selectedOrder.shipments[0], selectedOrder)}>&#x1F69A; Shipping Manager</button>
                       )}
@@ -851,7 +784,7 @@ function App() {
                         <button className="btn" style={{ borderColor: 'var(--success)', color: 'var(--success)' }}
                           onClick={async () => {
                             try { await apiFetch(`${API_URL}/lifecycle/extend/${selectedOrder.order_id}`, { method: 'POST' }); loadOrders(); loadLifecycleSummary(); closeDetail() }
-                            catch (err) { console.error('Failed to reactivate:', err) }
+                            catch (err) { console.error(err) }
                           }}>&#x267B; Reactivate Order</button>
                       )}
                       <button className="btn btn-danger" onClick={() => { if (confirm('Archive this order?')) updateStatus(selectedOrder.order_id, 'complete') }}>Archive Order</button>
@@ -866,25 +799,17 @@ function App() {
 
       <BrainChat isOpen={brainOpen} onClose={() => setBrainOpen(false)} />
 
-      {emailOrder && (
-        <EmailPanel orderId={emailOrder.order_id} customerEmail={emailOrder.email} onClose={() => setEmailOrder(null)} onSent={handleEmailSent} />
-      )}
+      {emailOrder && <EmailPanel orderId={emailOrder.order_id} customerEmail={emailOrder.email} onClose={() => setEmailOrder(null)} onSent={handleEmailSent} />}
 
       {shippingModal && (
         <div className="modal-overlay shipping-modal-overlay" onClick={closeShippingManager}>
           <div className="modal shipping-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Shipping — {shippingModal.shipment.warehouse}</h2>
+              <h2>Shipping \u2014 {shippingModal.shipment.warehouse}</h2>
               <button className="modal-close" onClick={closeShippingManager}>{'\u00D7'}</button>
             </div>
             <div className="modal-body">
-              <ShippingManager
-                shipment={shippingModal.shipment}
-                orderId={shippingModal.orderId}
-                customerInfo={shippingModal.customerInfo}
-                onClose={closeShippingManager}
-                onUpdate={loadOrders}
-              />
+              <ShippingManager shipment={shippingModal.shipment} orderId={shippingModal.orderId} customerInfo={shippingModal.customerInfo} onClose={closeShippingManager} onUpdate={loadOrders} />
             </div>
           </div>
         </div>
