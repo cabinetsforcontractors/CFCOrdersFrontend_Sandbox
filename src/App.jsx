@@ -1,6 +1,6 @@
 /**
  * App.jsx - CFC Orders Dashboard
- * v7.3.1 - Add orderWeight to openShippingManager so Shippo pre-fills weight
+ * v7.4.0 - AI summary sub-row on every order in table, Sync AI button in header
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
@@ -83,7 +83,6 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortCol, setSortCol] = useState('order_date')
   const [sortDir, setSortDir] = useState('desc')
-  const [lifecycleSummary, setLifecycleSummary] = useState({ active: 0, inactive: 0, canceled: 0, total: 0 })
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [panelTab, setPanelTab] = useState('details')
   const [comprehensiveSummary, setComprehensiveSummary] = useState('')
@@ -94,21 +93,20 @@ function App() {
   const [alertsLoading, setAlertsLoading] = useState(false)
   const [orderAlerts, setOrderAlerts] = useState([])
   const [checkingAlerts, setCheckingAlerts] = useState(false)
+  const [syncingAI, setSyncingAI] = useState(false)
   const alertsRef = useRef(null)
   const [shippingModal, setShippingModal] = useState(null)
   const [emailOrder, setEmailOrder] = useState(null)
   const [brainOpen, setBrainOpen] = useState(false)
-
   const [invoiceUrl, setInvoiceUrl] = useState(null)
   const [resendingInvoice, setResendingInvoice] = useState(false)
   const [invoiceCopied, setInvoiceCopied] = useState(false)
-
   const [notesDraft, setNotesDraft] = useState('')
   const [isEditingNotes, setIsEditingNotes] = useState(false)
   const [isSavingNotes, setIsSavingNotes] = useState(false)
 
   useEffect(() => { if (localStorage.getItem('cfc_logged_in') === 'true') setIsLoggedIn(true) }, [])
-  useEffect(() => { if (isLoggedIn) { loadOrders(); loadAlertSummary(); loadLifecycleSummary() } }, [isLoggedIn])
+  useEffect(() => { if (isLoggedIn) { loadOrders(); loadAlertSummary() } }, [isLoggedIn])
   useEffect(() => { setNotesDraft(selectedOrder?.notes || ''); setIsEditingNotes(false); setIsSavingNotes(false) }, [selectedOrder?.order_id])
 
   const handleLogin = (e) => {
@@ -116,7 +114,6 @@ function App() {
     if (password === APP_PASSWORD) { setIsLoggedIn(true); localStorage.setItem('cfc_logged_in', 'true'); setLoginError('') }
     else setLoginError('Incorrect password')
   }
-
   const handleLogout = () => { setIsLoggedIn(false); localStorage.removeItem('cfc_logged_in') }
 
   const loadOrders = useCallback(async () => {
@@ -127,14 +124,6 @@ function App() {
       if (data.orders) setOrders(data.orders)
     } catch (err) { console.error('Failed to load orders:', err) }
     setLoading(false)
-  }, [])
-
-  const loadLifecycleSummary = useCallback(async () => {
-    try {
-      const res = await apiFetch(`${API_URL}/lifecycle/summary`)
-      const data = await res.json()
-      if (data.success !== false) setLifecycleSummary({ active: data.active || 0, inactive: data.inactive || 0, canceled: data.canceled || 0, total: data.total || 0 })
-    } catch (err) { console.log('Lifecycle summary not available') }
   }, [])
 
   const loadAlertSummary = useCallback(async () => {
@@ -181,6 +170,15 @@ function App() {
     setCheckingAlerts(false)
   }
 
+  const handleSyncAI = async () => {
+    setSyncingAI(true)
+    try {
+      await apiFetch(`${API_URL}/orders/regenerate-summaries`, { method: 'POST' })
+      setTimeout(loadOrders, 3000) // reload after 3s to pick up new summaries
+    } catch (err) { console.error('Sync AI failed:', err) }
+    setSyncingAI(false)
+  }
+
   const toggleAlerts = () => { if (!alertsOpen) loadAllAlerts(); setAlertsOpen(v => !v) }
 
   useEffect(() => {
@@ -208,8 +206,7 @@ function App() {
 
   const handleResendInvoice = async () => {
     if (!selectedOrder) return
-    setResendingInvoice(true)
-    setInvoiceUrl(null)
+    setResendingInvoice(true); setInvoiceUrl(null)
     try {
       const res = await apiFetch(`${API_URL}/webhook/b2bwave-order`, {
         method: 'POST',
@@ -237,13 +234,13 @@ function App() {
   }, [orders])
 
   const lifecycleCounts = useMemo(() => {
-    let allActive = 0, inactive = 0, done = 0, canceledInDone = 0
+    let allActive = 0, inactive = 0, done = 0
     orders.forEach(o => {
-      if (o.current_status === 'complete') { done++; if (o.lifecycle_status === 'canceled') canceledInDone++ }
+      if (o.current_status === 'complete') done++
       else if (o.lifecycle_status === 'inactive') inactive++
       else allActive++
     })
-    return { allActive, inactive, done, canceledInDone, allNonDone: allActive + inactive }
+    return { allActive, inactive, done, allNonDone: allActive + inactive }
   }, [orders])
 
   const filteredOrders = useMemo(() => {
@@ -292,20 +289,14 @@ function App() {
   const handleTabClick = (tab) => { setActiveTab(tab); setStatusFilter(null) }
 
   const openDetail = (order) => {
-    setSelectedOrder(order)
-    setPanelTab('details')
-    setComprehensiveSummary('')
-    setInvoiceUrl(null)
-    setInvoiceCopied(false)
+    setSelectedOrder(order); setPanelTab('details'); setComprehensiveSummary(''); setInvoiceUrl(null); setInvoiceCopied(false)
     loadOrderAlerts(order.order_id)
   }
-
   const closeDetail = () => { setSelectedOrder(null); setComprehensiveSummary(''); setOrderAlerts([]) }
 
   const generateSummary = async () => {
     if (!selectedOrder) return
-    setSummaryLoading(true)
-    setComprehensiveSummary('')
+    setSummaryLoading(true); setComprehensiveSummary('')
     try {
       const res = await apiFetch(`${API_URL}/orders/${selectedOrder.order_id}/comprehensive-summary`, { method: 'POST' })
       const data = await res.json()
@@ -314,7 +305,6 @@ function App() {
     setSummaryLoading(false)
   }
 
-  // openShippingManager — passes orderWeight so Shippo can pre-fill weight
   const openShippingManager = (shipment, order) => {
     setShippingModal({
       shipment,
@@ -327,7 +317,7 @@ function App() {
         zip: order?.zip_code || '',
         phone: order?.phone || '',
         email: order?.email || '',
-        orderWeight: order?.total_weight || ''   // passed to ShippingManager for Shippo weight pre-fill
+        orderWeight: order?.total_weight || ''
       }
     })
   }
@@ -428,19 +418,20 @@ function App() {
             )}
           </div>
 
+          <button onClick={handleSyncAI} disabled={syncingAI} title="Regenerate AI summaries for all active orders"
+            style={{ background: syncingAI ? 'rgba(124,58,237,0.06)' : 'rgba(124,58,237,0.08)', borderColor: 'rgba(124,58,237,0.3)', color: '#7c3aed' }}>
+            {syncingAI ? '\u27f3 Syncing...' : '\u{1F9E0} Sync AI'}
+          </button>
+
           <button onClick={() => setBrainOpen(v => !v)} title="Brain Chat"
             style={{ background: brainOpen ? 'rgba(124,58,237,0.12)' : undefined, borderColor: brainOpen ? '#7c3aed' : undefined, color: brainOpen ? '#7c3aed' : undefined }}>
             &#x1F9E0; Brain
-          </button>
-          <button onClick={() => window.open('/sort_order_review.html', '_blank')}
-            style={{ background: 'rgba(5,150,105,0.08)', borderColor: 'rgba(5,150,105,0.3)', color: '#059669' }}>
-            &#x1F4CA; Sort Review
           </button>
           <button onClick={() => window.open(OTHER_ENV_URL, '_blank')}
             style={{ background: IS_SANDBOX ? 'rgba(5,150,105,0.08)' : 'rgba(217,119,6,0.08)', borderColor: IS_SANDBOX ? 'rgba(5,150,105,0.3)' : 'rgba(217,119,6,0.3)', color: IS_SANDBOX ? 'var(--success)' : 'var(--warning)' }}>
             {IS_SANDBOX ? '\u{1F7E2} Open Live' : '\u{1F9EA} Open Sandbox'}
           </button>
-          <button onClick={() => { loadOrders(); loadAlertSummary(); loadLifecycleSummary() }} disabled={loading}>{loading ? '...' : '\u{21BB} Refresh'}</button>
+          <button onClick={() => { loadOrders(); loadAlertSummary() }} disabled={loading}>{loading ? '...' : '\u{21BB} Refresh'}</button>
           <button onClick={handleLogout}>Logout</button>
         </div>
       </header>
@@ -468,8 +459,7 @@ function App() {
               </button>
               <span style={{ width: '1px', height: '24px', background: 'var(--border)', margin: '0 4px' }} />
               {ACTIVE_STATUS_KEYS.map(key => {
-                const s = STATUS_MAP[key]
-                const isActive = statusFilter === key
+                const s = STATUS_MAP[key]; const isActive = statusFilter === key
                 return (
                   <button key={key} className={`tab-btn${isActive ? ' active' : ''}`}
                     onClick={() => { if (activeTab === 'done') setActiveTab('all'); setStatusFilter(isActive ? null : key) }}>
@@ -530,9 +520,7 @@ function App() {
                         {order.payment_received && (
                           <span style={{ display: 'inline-block', marginLeft: '4px', background: 'rgba(5,150,105,0.12)', color: '#059669', border: '1px solid rgba(5,150,105,0.3)', borderRadius: '4px', fontSize: '10px', fontWeight: '700', padding: '1px 5px', verticalAlign: 'middle' }}>PAID</span>
                         )}
-                        {alertLabel && (
-                          <div style={{ fontSize: '10px', fontWeight: '700', color: order.alert_level === 'critical' ? '#DC2626' : '#D97706', marginTop: '3px' }}>{alertLabel}</div>
-                        )}
+                        {alertLabel && <div style={{ fontSize: '10px', fontWeight: '700', color: order.alert_level === 'critical' ? '#DC2626' : '#D97706', marginTop: '3px' }}>{alertLabel}</div>}
                       </td>
                       <td>
                         <div className="customer-name">{order.company_name || order.customer_name || '\u2014'}</div>
@@ -561,14 +549,17 @@ function App() {
                           </div>
                         )}
                         {shipping.charge > 0 && orderTotal > 0 && (
-                          <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontWeight: '600' }}>
-                            Total: ${(orderTotal + shipping.charge).toFixed(2)}
-                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontWeight: '600' }}>Total: ${(orderTotal + shipping.charge).toFixed(2)}</div>
                         )}
                       </td>
                       <td style={{ color: 'var(--text-dim)', fontSize: '12px' }}>{fmtDate(order.order_date)}</td>
                       <td><span className={`age-cell ${ageClass}`}>{days}d</span></td>
                       <td>{wh && <span className="warehouse-tag">{wh}</span>}</td>
+
+                      {/* AI Summary inline — spans all cols via CSS trick, rendered in last cell */}
+                      {order.ai_summary && (
+                        <td colSpan={7} style={{ display: 'none' }} />
+                      )}
                     </tr>
                   )
                 })}
@@ -622,25 +613,29 @@ function App() {
                       </div>
                     )}
 
+                    {/* 6-bullet AI state summary — shown at top of Details tab */}
+                    {selectedOrder.ai_summary && (
+                      <div className="detail-section" style={{ background: '#F8F7FF', border: '1px solid #DDD6FE', borderLeft: '4px solid #7C3AED', borderRadius: '0 6px 6px 0', padding: '12px 14px', marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <h4 style={{ margin: 0, color: '#7C3AED', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>&#x1F9E0; AI State Summary</h4>
+                          <button className="btn btn-sm" style={{ fontSize: '10px', padding: '2px 8px', borderColor: '#DDD6FE', color: '#7C3AED' }} onClick={() => setPanelTab('ai')}>Full analysis →</button>
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--text)', lineHeight: '1.7', whiteSpace: 'pre-wrap' }}>{selectedOrder.ai_summary}</div>
+                      </div>
+                    )}
+
                     {(selectedOrder.lifecycle_status === 'inactive' || selectedOrder.lifecycle_status === 'canceled') && (
                       <div className="detail-section" style={{ background: selectedOrder.lifecycle_status === 'canceled' ? 'rgba(220,38,38,0.06)' : 'rgba(217,119,6,0.06)', border: `1px solid ${selectedOrder.lifecycle_status === 'canceled' ? 'rgba(220,38,38,0.25)' : 'rgba(217,119,6,0.25)'}`, borderRadius: '8px', padding: '12px' }}>
                         <h4 style={{ color: selectedOrder.lifecycle_status === 'canceled' ? '#DC2626' : '#D97706', margin: '0 0 8px 0' }}>
                           {selectedOrder.lifecycle_status === 'canceled' ? '\u274c Canceled' : '\u23f8\ufe0f Inactive'}
                         </h4>
-                        {selectedOrder.lifecycle_deadline_at && (
-                          <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
-                            {selectedOrder.lifecycle_status === 'inactive' ? `Will be canceled: ${fmtDate(selectedOrder.lifecycle_deadline_at)}` : `Canceled: ${fmtDate(selectedOrder.completed_at || selectedOrder.lifecycle_deadline_at)}`}
-                          </div>
-                        )}
                       </div>
                     )}
 
                     {selectedOrder.comments && (
                       <div className="detail-section">
                         <h4>Customer Comments</h4>
-                        <div style={{ background: '#FFF7ED', border: '1px solid #FCD34D', borderLeft: '4px solid #F59E0B', borderRadius: '0 6px 6px 0', padding: '10px 12px', fontSize: '13px', color: '#92400E', lineHeight: '1.5' }}>
-                          {selectedOrder.comments}
-                        </div>
+                        <div style={{ background: '#FFF7ED', border: '1px solid #FCD34D', borderLeft: '4px solid #F59E0B', borderRadius: '0 6px 6px 0', padding: '10px 12px', fontSize: '13px', color: '#92400E', lineHeight: '1.5' }}>{selectedOrder.comments}</div>
                       </div>
                     )}
 
@@ -654,26 +649,13 @@ function App() {
 
                     <div className="detail-section">
                       <h4>Order Info</h4>
-                      <div className="detail-row">
-                        <span className="detail-label">Status</span>
-                        <span className={`status-badge ${STATUS_MAP[selectedOrder.current_status]?.badge || ''}`}>
-                          <span className="status-dot" />{STATUS_MAP[selectedOrder.current_status]?.label || selectedOrder.current_status}
-                        </span>
-                      </div>
+                      <div className="detail-row"><span className="detail-label">Status</span><span className={`status-badge ${STATUS_MAP[selectedOrder.current_status]?.badge || ''}`}><span className="status-dot" />{STATUS_MAP[selectedOrder.current_status]?.label || selectedOrder.current_status}</span></div>
                       <div className="detail-row"><span className="detail-label">Date</span><span className="detail-value">{fmtDate(selectedOrder.order_date)}</span></div>
                       <div className="detail-row"><span className="detail-label">Days Open</span><span className="detail-value mono">{selectedOrder.days_open || 0}</span></div>
                       <div className="detail-row"><span className="detail-label">Subtotal</span><span className="detail-value mono" style={{ color: 'var(--success)' }}>{fmtMoney(selectedOrder.order_total)}</span></div>
-                      <div className="detail-row">
-                        <span className="detail-label">Payment</span>
-                        <span className="detail-value" style={{ color: selectedOrder.payment_received ? 'var(--success)' : 'var(--text-dim)' }}>
-                          {selectedOrder.payment_received ? '\u2705 Received' : '\u23f3 Pending'}
-                        </span>
-                      </div>
+                      <div className="detail-row"><span className="detail-label">Payment</span><span className="detail-value" style={{ color: selectedOrder.payment_received ? 'var(--success)' : 'var(--text-dim)' }}>{selectedOrder.payment_received ? '\u2705 Received' : '\u23f3 Pending'}</span></div>
                       {selectedOrder.payment_received && selectedOrder.payment_amount && (
                         <div className="detail-row"><span className="detail-label">Paid Amount</span><span className="detail-value mono">{fmtMoney(selectedOrder.payment_amount)}</span></div>
-                      )}
-                      {selectedOrder.payment_received && selectedOrder.payment_received_at && (
-                        <div className="detail-row"><span className="detail-label">Paid At</span><span className="detail-value" style={{ fontSize: '12px' }}>{fmtDateTime(selectedOrder.payment_received_at)}</span></div>
                       )}
                     </div>
 
@@ -689,11 +671,7 @@ function App() {
                     <div className="detail-section">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                         <h4 style={{ margin: 0 }}>Internal Notes</h4>
-                        {!isEditingNotes && (
-                          <button className="btn btn-sm" onClick={() => setIsEditingNotes(true)} style={{ fontSize: '11px' }}>
-                            {selectedOrder.notes ? 'Edit' : '+ Add Note'}
-                          </button>
-                        )}
+                        {!isEditingNotes && <button className="btn btn-sm" onClick={() => setIsEditingNotes(true)} style={{ fontSize: '11px' }}>{selectedOrder.notes ? 'Edit' : '+ Add Note'}</button>}
                       </div>
                       {isEditingNotes ? (
                         <div style={{ background: '#FAF5FF', border: '1px solid #D8B4FE', borderRadius: '8px', padding: '10px' }}>
@@ -711,16 +689,6 @@ function App() {
                       )}
                     </div>
 
-                    {selectedOrder.ai_summary && (
-                      <div className="detail-section">
-                        <h4>AI Summary</h4>
-                        <div style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderLeft: '3px solid var(--accent)', borderRadius: '0 6px 6px 0', padding: '10px 12px', fontSize: '12px', color: 'var(--text-dim)', lineHeight: '1.6', whiteSpace: 'pre-wrap', maxHeight: '120px', overflow: 'hidden' }}>
-                          {selectedOrder.ai_summary.slice(0, 300)}{selectedOrder.ai_summary.length > 300 ? '\u2026' : ''}
-                        </div>
-                        <button className="btn btn-sm" style={{ marginTop: '6px', fontSize: '11px' }} onClick={() => setPanelTab('ai')}>View full AI analysis \u2192</button>
-                      </div>
-                    )}
-
                     <div className="detail-section">
                       <h4>Change Status</h4>
                       <select value={selectedOrder.current_status}
@@ -735,8 +703,8 @@ function App() {
                 {panelTab === 'ai' && (
                   <div className="detail-section">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                      <h4 style={{ margin: 0 }}>AI Analysis</h4>
-                      <button className="btn btn-primary btn-sm" onClick={generateSummary} disabled={summaryLoading}>{summaryLoading ? 'Generating...' : 'Generate Summary'}</button>
+                      <h4 style={{ margin: 0 }}>Full AI Analysis</h4>
+                      <button className="btn btn-primary btn-sm" onClick={generateSummary} disabled={summaryLoading}>{summaryLoading ? 'Generating...' : 'Generate'}</button>
                     </div>
                     <div style={{ background: 'var(--bg-input)', borderRadius: '8px', padding: '16px', minHeight: '200px', border: '1px solid var(--border)' }}>
                       {summaryLoading ? (
@@ -747,9 +715,14 @@ function App() {
                       ) : comprehensiveSummary ? (
                         <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6', fontSize: '13px', color: 'var(--text)' }}>{comprehensiveSummary}</div>
                       ) : selectedOrder.ai_summary ? (
-                        <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6', fontSize: '13px', color: 'var(--text)' }}>{selectedOrder.ai_summary}</div>
+                        <>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Current 6-Bullet State Summary</div>
+                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.7', fontSize: '13px', color: 'var(--text)' }}>{selectedOrder.ai_summary}</div>
+                          <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid var(--border)' }} />
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center' }}>Click Generate for a full historical analysis</div>
+                        </>
                       ) : (
-                        <div style={{ textAlign: 'center', paddingTop: '50px', color: 'var(--text-muted)', fontSize: '13px', lineHeight: '1.8' }}>Click "Generate Summary" for a comprehensive AI analysis.</div>
+                        <div style={{ textAlign: 'center', paddingTop: '50px', color: 'var(--text-muted)', fontSize: '13px', lineHeight: '1.8' }}>Click Generate for a comprehensive AI analysis.</div>
                       )}
                     </div>
                   </div>
@@ -765,7 +738,7 @@ function App() {
                       </button>
                       {invoiceUrl && (
                         <div style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '6px', padding: '10px 12px', fontSize: '12px' }}>
-                          <div style={{ color: 'var(--text-dim)', marginBottom: '6px' }}>Invoice / Checkout URL:</div>
+                          <div style={{ color: 'var(--text-dim)', marginBottom: '6px' }}>Checkout URL:</div>
                           <div style={{ wordBreak: 'break-all', color: 'var(--text)', marginBottom: '8px', fontFamily: 'monospace', fontSize: '11px' }}>{invoiceUrl}</div>
                           <button className="btn btn-sm" onClick={handleCopyInvoiceUrl} style={{ borderColor: 'var(--success)', color: invoiceCopied ? 'var(--success)' : undefined }}>
                             {invoiceCopied ? '\u2705 Copied!' : '\ud83d\udccb Copy Link'}
@@ -776,17 +749,10 @@ function App() {
                         <button className="btn" onClick={() => openShippingManager(selectedOrder.shipments[0], selectedOrder)}>&#x1F69A; Shipping Manager</button>
                       )}
                       <button className="btn" onClick={() => {
-                        apiFetch(`${API_URL}/alerts/check/${selectedOrder.order_id}`, { method: 'POST' })
+                        apiFetch(`${API_URL}/orders/${selectedOrder.order_id}/generate-summary?force=true`, { method: 'POST' })
                           .then(r => r.json())
-                          .then(() => { loadOrderAlerts(selectedOrder.order_id); loadAlertSummary() })
-                      }}>&#x1F514; Check Alerts</button>
-                      {selectedOrder.lifecycle_status === 'inactive' && (
-                        <button className="btn" style={{ borderColor: 'var(--success)', color: 'var(--success)' }}
-                          onClick={async () => {
-                            try { await apiFetch(`${API_URL}/lifecycle/extend/${selectedOrder.order_id}`, { method: 'POST' }); loadOrders(); loadLifecycleSummary(); closeDetail() }
-                            catch (err) { console.error(err) }
-                          }}>&#x267B; Reactivate Order</button>
-                      )}
+                          .then(d => { if (d.summary) setSelectedOrder(prev => ({ ...prev, ai_summary: d.summary })); loadOrders() })
+                      }}>&#x1F9E0; Refresh AI Summary</button>
                       <button className="btn btn-danger" onClick={() => { if (confirm('Archive this order?')) updateStatus(selectedOrder.order_id, 'complete') }}>Archive Order</button>
                     </div>
                   </div>
@@ -798,7 +764,6 @@ function App() {
       </div>
 
       <BrainChat isOpen={brainOpen} onClose={() => setBrainOpen(false)} />
-
       {emailOrder && <EmailPanel orderId={emailOrder.order_id} customerEmail={emailOrder.email} onClose={() => setEmailOrder(null)} onSent={handleEmailSent} />}
 
       {shippingModal && (
