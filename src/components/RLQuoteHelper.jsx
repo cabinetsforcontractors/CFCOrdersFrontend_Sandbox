@@ -1,12 +1,13 @@
 /**
  * RLQuoteHelper.jsx
  * Complete RL Carriers quote and BOL helper
- * v5.9.2 - Liftgate toggle for commercial addresses; auto-quote uses R+L NET charge directly
+ * v5.9.3 - Internal liftgate checkbox for commercial addresses
  *
  * Auto-quote flow: validate address (Smarty) → R+L freight quote (NET = all-in price)
- * Manual flow: Open RL website, enter quote details manually (still works)
+ * Manual flow: Open RL website, enter quote details manually
  *
- * liftgate prop: passed from parent when address is commercial and liftgate is needed
+ * data.is_residential: from rl-quote-data endpoint (Smarty-validated, stored at checkout)
+ * Liftgate checkbox is internal state — shown only for commercial addresses
  */
 
 import { useState } from 'react'
@@ -14,7 +15,7 @@ import { CustomerAddress, BillToAddress, CopyButton } from './CustomerAddress'
 import { API_URL } from '../config'
 import { apiFetch } from '../api'
 
-const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL, liftgate = false }) => {
+const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
   const [quoteNumber, setQuoteNumber] = useState(data.existing_quote?.quote_number || '')
   const [quotePrice, setQuotePrice] = useState(data.existing_quote?.quote_price || '')
   const [quoteUrl, setQuoteUrl] = useState(data.existing_quote?.quote_url || '')
@@ -24,6 +25,11 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL, liftgate =
   const [autoQuoting, setAutoQuoting] = useState(false)
   const [autoQuoteResult, setAutoQuoteResult] = useState(null)
   const [autoQuoteError, setAutoQuoteError] = useState(null)
+
+  // Liftgate is internal state — only relevant for commercial addresses
+  const [liftgateChecked, setLiftgateChecked] = useState(false)
+
+  const isCommercial = data.is_residential === false
 
   const customerPrice = quotePrice ? (parseFloat(quotePrice) + 50).toFixed(2) : null
 
@@ -46,7 +52,7 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL, liftgate =
         weight: data.weight?.value || 0,
         freight_class: '85',
         customer_markup: 50.00,
-        liftgate_required: liftgate,
+        liftgate_required: isCommercial ? liftgateChecked : false,
       }
 
       const res = await apiFetch(`${API_URL}/proxy/auto-quote`, {
@@ -115,8 +121,6 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL, liftgate =
 
   const handleChangeUrl = () => { setSaved(false) }
 
-  const isCommercial = data.is_residential === false
-
   return (
     <div className="rl-helper">
       {/* Section 1: Quote Info */}
@@ -148,20 +152,27 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL, liftgate =
           <CopyButton label="Commodity" text="RTA Cabinetry" />
         </div>
 
-        {/* Commercial liftgate notice */}
+        {/* Commercial address notice + liftgate checkbox */}
         {isCommercial && (
           <div style={{
             background: '#EFF6FF',
             border: '1px solid #BFDBFE',
             borderRadius: '6px',
-            padding: '8px 12px',
+            padding: '10px 12px',
             marginTop: '10px',
             fontSize: '13px',
             color: '#1E40AF'
           }}>
-            🏢 <strong>Commercial address.</strong> {liftgate
-              ? 'Liftgate requested — included in quote.'
-              : 'No liftgate — assumes customer has a dock or forklift.'}
+            <div style={{ marginBottom: '8px' }}>🏢 <strong>Commercial address</strong> — liftgate not included by default.</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: '600' }}>
+              <input
+                type="checkbox"
+                checked={liftgateChecked}
+                onChange={e => setLiftgateChecked(e.target.checked)}
+                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+              />
+              Destination liftgate required (no dock / no forklift)
+            </label>
           </div>
         )}
 
@@ -258,19 +269,6 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL, liftgate =
                 </>
               )}
             </div>
-
-            {autoQuoteResult.validated_address?.address && (
-              <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #c3e6cb' }}>
-                <strong>Validated Address:</strong>
-                <div style={{ fontSize: '12px', marginTop: '4px', color: '#155724' }}>
-                  {autoQuoteResult.validated_address.address?.delivery_line_1 || autoQuoteResult.validated_address.address?.street || ''}
-                  {autoQuoteResult.validated_address.address?.city && `, ${autoQuoteResult.validated_address.address.city}`}
-                  {autoQuoteResult.validated_address.address?.state && ` ${autoQuoteResult.validated_address.address.state}`}
-                  {' '}
-                  {autoQuoteResult.validated_address.address?.zipcode || autoQuoteResult.validated_address.address?.zip || ''}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>
