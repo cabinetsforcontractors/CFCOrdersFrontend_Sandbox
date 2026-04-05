@@ -1,10 +1,12 @@
 /**
  * RLQuoteHelper.jsx
  * Complete RL Carriers quote and BOL helper
- * v5.9.1 - Phase 5C: replaced all fetch() with apiFetch() for X-Admin-Token injection
+ * v5.9.2 - Liftgate toggle for commercial addresses; auto-quote uses R+L NET charge directly
  *
- * Auto-quote flow: validate address (Smarty) → R+L freight quote → +$50 markup
+ * Auto-quote flow: validate address (Smarty) → R+L freight quote (NET = all-in price)
  * Manual flow: Open RL website, enter quote details manually (still works)
+ *
+ * liftgate prop: passed from parent when address is commercial and liftgate is needed
  */
 
 import { useState } from 'react'
@@ -12,7 +14,7 @@ import { CustomerAddress, BillToAddress, CopyButton } from './CustomerAddress'
 import { API_URL } from '../config'
 import { apiFetch } from '../api'
 
-const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
+const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL, liftgate = false }) => {
   const [quoteNumber, setQuoteNumber] = useState(data.existing_quote?.quote_number || '')
   const [quotePrice, setQuotePrice] = useState(data.existing_quote?.quote_price || '')
   const [quoteUrl, setQuoteUrl] = useState(data.existing_quote?.quote_url || '')
@@ -43,7 +45,8 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
         dest_zipcode: data.destination?.zip || '',
         weight: data.weight?.value || 0,
         freight_class: '85',
-        customer_markup: 50.00
+        customer_markup: 50.00,
+        liftgate_required: liftgate,
       }
 
       const res = await apiFetch(`${API_URL}/proxy/auto-quote`, {
@@ -112,6 +115,8 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
 
   const handleChangeUrl = () => { setSaved(false) }
 
+  const isCommercial = data.is_residential === false
+
   return (
     <div className="rl-helper">
       {/* Section 1: Quote Info */}
@@ -142,6 +147,23 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
 
           <CopyButton label="Commodity" text="RTA Cabinetry" />
         </div>
+
+        {/* Commercial liftgate notice */}
+        {isCommercial && (
+          <div style={{
+            background: '#EFF6FF',
+            border: '1px solid #BFDBFE',
+            borderRadius: '6px',
+            padding: '8px 12px',
+            marginTop: '10px',
+            fontSize: '13px',
+            color: '#1E40AF'
+          }}>
+            🏢 <strong>Commercial address.</strong> {liftgate
+              ? 'Liftgate requested — included in quote.'
+              : 'No liftgate — assumes customer has a dock or forklift.'}
+          </div>
+        )}
 
         {data.oversized?.detected && (
           <div className="oversized-warning">
@@ -211,7 +233,7 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
           }}>
             <strong style={{ color: '#111' }}>✅ Auto Quote Complete</strong>
             <div style={{ marginTop: '6px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
-              <span>Carrier Price:</span>
+              <span>Carrier Price (R+L NET):</span>
               <strong>${autoQuoteResult.carrier_price}</strong>
               <span>Customer Price (+$50):</span>
               <strong style={{ color: '#155724' }}>${autoQuoteResult.customer_price}</strong>
@@ -229,6 +251,12 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
               )}
               <span>Residential:</span>
               <span>{autoQuoteResult.is_residential ? 'Yes' : 'No (Commercial)'}</span>
+              {autoQuoteResult.liftgate_required && (
+                <>
+                  <span>Liftgate:</span>
+                  <span>Requested</span>
+                </>
+              )}
             </div>
 
             {autoQuoteResult.validated_address?.address && (
@@ -254,7 +282,7 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
         <div className="input-grid">
           <div className="input-group">
             <label>Quote Number:</label>
-            <input type="text" value={quoteNumber} onChange={(e) => setQuoteNumber(e.target.value)} placeholder="e.g., 9680088" />
+            <input type="text" value={quoteNumber} onChange={(e) => setQuoteNumber(e.target.value)} placeholder="e.g., 62310338" />
           </div>
           <div className="input-group">
             <label>Quote Price ($):</label>
