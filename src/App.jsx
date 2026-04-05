@@ -1,6 +1,6 @@
 /**
  * App.jsx - CFC Orders Dashboard
- * v7.6.0 - Quote All Warehouses: single action runs LTL auto-quote for every shipment
+ * v7.7.0 - Liftgate toggle for Quote All Warehouses (LTL); R+L NET charge direct
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
@@ -108,6 +108,8 @@ function App() {
   // Multi-warehouse LTL quote-all
   const [multiQuoteResults, setMultiQuoteResults] = useState([])
   const [multiQuoteLoading, setMultiQuoteLoading] = useState(false)
+  // Liftgate toggle for Quote All — one checkbox applies to all warehouses in the run
+  const [liftgateForQuoteAll, setLiftgateForQuoteAll] = useState(false)
 
   useEffect(() => { if (localStorage.getItem('cfc_logged_in') === 'true') setIsLoggedIn(true) }, [])
   useEffect(() => { if (isLoggedIn) { loadOrders(); loadAlertSummary() } }, [isLoggedIn])
@@ -231,6 +233,7 @@ function App() {
   }
 
   // Quote all shipments via LTL auto-quote in sequence
+  // liftgateForQuoteAll applies to all warehouses in this run (commercial addresses without a dock)
   const handleQuoteAllLTL = async () => {
     if (!selectedOrder?.shipments?.length) return
     setMultiQuoteLoading(true)
@@ -240,7 +243,6 @@ function App() {
     for (const shipment of selectedOrder.shipments) {
       const result = { warehouse: shipment.warehouse, shipment_id: shipment.shipment_id }
       try {
-        // Step 1: fetch rl-quote-data for weight + destination
         const rlRes = await apiFetch(`${API_URL}/shipments/${shipment.shipment_id}/rl-quote-data`)
         const rlData = await rlRes.json()
         if (rlData.status !== 'ok') throw new Error(rlData.message || 'Failed to load quote data')
@@ -248,6 +250,7 @@ function App() {
         result.weight = rlData.weight?.value
         result.weight_note = rlData.weight?.note
         result.origin_zip = rlData.origin_zip
+        result.is_residential = rlData.is_residential !== false  // default true
 
         if (!rlData.weight?.value) {
           result.error = rlData.weight?.note || 'No weight available'
@@ -255,7 +258,6 @@ function App() {
           continue
         }
 
-        // Step 2: run auto-quote
         const payload = {
           origin_zip: rlData.origin_zip || '',
           dest_street: rlData.destination?.street || '',
@@ -264,7 +266,9 @@ function App() {
           dest_zipcode: rlData.destination?.zip || '',
           weight: rlData.weight.value,
           freight_class: '85',
-          customer_markup: 50.00
+          customer_markup: 50.00,
+          // For commercial addresses, apply the liftgate toggle
+          liftgate_required: result.is_residential ? false : liftgateForQuoteAll,
         }
 
         const quoteRes = await apiFetch(`${API_URL}/proxy/auto-quote`, {
@@ -364,6 +368,7 @@ function App() {
     setInvoiceCopied(false)
     setMultiQuoteResults([])
     setMultiQuoteLoading(false)
+    setLiftgateForQuoteAll(false)
     loadOrderAlerts(order.order_id)
   }
   const closeDetail = () => { setSelectedOrder(null); setComprehensiveSummary(''); setOrderAlerts([]); setMultiQuoteResults([]) }
@@ -411,6 +416,9 @@ function App() {
   }
 
   const handleContentAreaClick = () => { if (selectedOrder) closeDetail() }
+
+  // Determine if any shipment in the selected order is commercial (for liftgate toggle visibility)
+  const hasCommercialShipments = selectedOrder?.shipments?.some(s => s.is_residential === false) || false
 
   if (!isLoggedIn) {
     return (
@@ -630,7 +638,6 @@ function App() {
                       <td style={{ color: 'var(--text-dim)', fontSize: '12px' }}>{fmtDate(order.order_date)}</td>
                       <td><span className={`age-cell ${ageClass}`}>{days}d</span></td>
                       <td>{orderWarehouses.map(w => <span key={w} className="warehouse-tag" style={{display:'block',marginBottom:'2px'}}>{w}</span>)}</td>
-                      {order.ai_summary && (<td colSpan={7} style={{ display: 'none' }} />)}
                     </tr>
                   )
                 })}
@@ -691,14 +698,6 @@ function App() {
                           <button className="btn btn-sm" style={{ fontSize: '10px', padding: '2px 8px', borderColor: '#DDD6FE', color: '#7C3AED' }} onClick={() => setPanelTab('ai')}>Full analysis &#x2192;</button>
                         </div>
                         <div style={{ fontSize: '12px', color: 'var(--text)', lineHeight: '1.7', whiteSpace: 'pre-wrap' }}>{selectedOrder.ai_summary}</div>
-                      </div>
-                    )}
-
-                    {(selectedOrder.lifecycle_status === 'inactive' || selectedOrder.lifecycle_status === 'canceled') && (
-                      <div className="detail-section" style={{ background: selectedOrder.lifecycle_status === 'canceled' ? 'rgba(220,38,38,0.06)' : 'rgba(217,119,6,0.06)', border: `1px solid ${selectedOrder.lifecycle_status === 'canceled' ? 'rgba(220,38,38,0.25)' : 'rgba(217,119,6,0.25)'}`, borderRadius: '8px', padding: '12px' }}>
-                        <h4 style={{ color: selectedOrder.lifecycle_status === 'canceled' ? '#DC2626' : '#D97706', margin: '0 0 8px 0' }}>
-                          {selectedOrder.lifecycle_status === 'canceled' ? '\u274c Canceled' : '\u23f8\ufe0f Inactive'}
-                        </h4>
                       </div>
                     )}
 
@@ -816,16 +815,33 @@ function App() {
                         </div>
                       )}
 
-                      {/* Quote All Warehouses */}
+                      {/* Liftgate toggle — shown for commercial addresses, applies to all warehouses in Quote All */}
                       {selectedOrder.shipments?.length > 0 && (
-                        <button
-                          className="btn"
-                          onClick={handleQuoteAllLTL}
-                          disabled={multiQuoteLoading}
-                          style={{ borderColor: '#0ea5e9', color: '#0ea5e9', fontWeight: '600' }}
-                        >
-                          {multiQuoteLoading ? '\u23f3 Quoting...' : '\u26a1 Quote All Warehouses (LTL)'}
-                        </button>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {hasCommercialShipments && (
+                            <label style={{
+                              display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer',
+                              background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '6px',
+                              padding: '8px 10px', fontSize: '13px', color: '#1E40AF', fontWeight: '500'
+                            }}>
+                              <input
+                                type="checkbox"
+                                checked={liftgateForQuoteAll}
+                                onChange={e => setLiftgateForQuoteAll(e.target.checked)}
+                                style={{ width: '15px', height: '15px', cursor: 'pointer' }}
+                              />
+                              🏢 Destination liftgate required (no dock)
+                            </label>
+                          )}
+                          <button
+                            className="btn"
+                            onClick={handleQuoteAllLTL}
+                            disabled={multiQuoteLoading}
+                            style={{ borderColor: '#0ea5e9', color: '#0ea5e9', fontWeight: '600' }}
+                          >
+                            {multiQuoteLoading ? '\u23f3 Quoting...' : '\u26a1 Quote All Warehouses (LTL)'}
+                          </button>
+                        </div>
                       )}
 
                       {/* Multi-quote results */}
@@ -836,13 +852,16 @@ function App() {
                           </div>
                           {multiQuoteResults.map((r, i) => (
                             <div key={r.shipment_id || i} style={{ marginBottom: i < multiQuoteResults.length - 1 ? '10px' : 0, paddingBottom: i < multiQuoteResults.length - 1 ? '10px' : 0, borderBottom: i < multiQuoteResults.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                              <div style={{ fontWeight: '600', marginBottom: '4px' }}>{r.warehouse}</div>
+                              <div style={{ fontWeight: '600', marginBottom: '4px' }}>
+                                {r.warehouse}
+                                {r.is_residential === false && <span style={{ marginLeft: '6px', fontSize: '11px', color: '#1E40AF', background: '#EFF6FF', padding: '1px 5px', borderRadius: '3px' }}>🏢 Commercial</span>}
+                              </div>
                               {r.error ? (
                                 <div style={{ color: 'var(--danger)', fontSize: '12px' }}>\u26a0\ufe0f {r.error}</div>
                               ) : (
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 12px', fontSize: '12px', color: 'var(--text-dim)' }}>
                                   <span>Weight:</span><span style={{ color: 'var(--text)', fontWeight: '600' }}>{r.weight} lbs</span>
-                                  <span>Carrier:</span><span style={{ color: 'var(--text)', fontWeight: '600' }}>${r.carrier_price?.toFixed(2)}</span>
+                                  <span>Carrier (R+L NET):</span><span style={{ color: 'var(--text)', fontWeight: '600' }}>${r.carrier_price?.toFixed(2)}</span>
                                   <span>Customer (+$50):</span><span style={{ color: 'var(--success)', fontWeight: '700' }}>${r.customer_price?.toFixed(2)}</span>
                                   {r.quote_number && <><span>Quote #:</span><span style={{ color: 'var(--text)', fontFamily: 'monospace' }}>{r.quote_number}</span></>}
                                   {r.service_days && <><span>Transit:</span><span style={{ color: 'var(--text)' }}>{r.service_days} days</span></>}
