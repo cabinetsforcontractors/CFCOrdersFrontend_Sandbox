@@ -10,7 +10,7 @@ import EmailPanel from './components/EmailPanel'
 import BrainChat from './components/BrainChat'
 
 import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL } from './config'
-import { apiFetch } from '../api'
+import { apiFetch } from './api'
 
 const STATUSES = [
   { key: 'needs_payment_link',    label: 'Need Invoice',   short: 'Invoice',   badge: 'sb-invoice',   card: 'mc-invoice' },
@@ -630,10 +630,7 @@ function App() {
                       <td style={{ color: 'var(--text-dim)', fontSize: '12px' }}>{fmtDate(order.order_date)}</td>
                       <td><span className={`age-cell ${ageClass}`}>{days}d</span></td>
                       <td>{orderWarehouses.map(w => <span key={w} className="warehouse-tag" style={{display:'block',marginBottom:'2px'}}>{w}</span>)}</td>
-
-                      {order.ai_summary && (
-                        <td colSpan={7} style={{ display: 'none' }} />
-                      )}
+                      {order.ai_summary && (<td colSpan={7} style={{ display: 'none' }} />)}
                     </tr>
                   )
                 })}
@@ -819,7 +816,7 @@ function App() {
                         </div>
                       )}
 
-                      {/* Quote All Warehouses — single action, results shown below */}
+                      {/* Quote All Warehouses */}
                       {selectedOrder.shipments?.length > 0 && (
                         <button
                           className="btn"
