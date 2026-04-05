@@ -1,6 +1,6 @@
 /**
  * App.jsx - CFC Orders Dashboard
- * v7.5.0 - Multi-warehouse shipping: all warehouses in table column, per-warehouse shipping buttons
+ * v7.6.0 - Quote All Warehouses: single action runs LTL auto-quote for every shipment
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
@@ -105,6 +105,10 @@ function App() {
   const [isEditingNotes, setIsEditingNotes] = useState(false)
   const [isSavingNotes, setIsSavingNotes] = useState(false)
 
+  // Multi-warehouse LTL quote-all
+  const [multiQuoteResults, setMultiQuoteResults] = useState([])
+  const [multiQuoteLoading, setMultiQuoteLoading] = useState(false)
+
   useEffect(() => { if (localStorage.getItem('cfc_logged_in') === 'true') setIsLoggedIn(true) }, [])
   useEffect(() => { if (isLoggedIn) { loadOrders(); loadAlertSummary() } }, [isLoggedIn])
   useEffect(() => { setNotesDraft(selectedOrder?.notes || ''); setIsEditingNotes(false); setIsSavingNotes(false) }, [selectedOrder?.order_id])
@@ -174,7 +178,7 @@ function App() {
     setSyncingAI(true)
     try {
       await apiFetch(`${API_URL}/orders/regenerate-summaries`, { method: 'POST' })
-      setTimeout(loadOrders, 3000) // reload after 3s to pick up new summaries
+      setTimeout(loadOrders, 3000)
     } catch (err) { console.error('Sync AI failed:', err) }
     setSyncingAI(false)
   }
@@ -224,6 +228,70 @@ function App() {
     navigator.clipboard.writeText(invoiceUrl)
     setInvoiceCopied(true)
     setTimeout(() => setInvoiceCopied(false), 2000)
+  }
+
+  // Quote all shipments via LTL auto-quote in sequence
+  const handleQuoteAllLTL = async () => {
+    if (!selectedOrder?.shipments?.length) return
+    setMultiQuoteLoading(true)
+    setMultiQuoteResults([])
+
+    const results = []
+    for (const shipment of selectedOrder.shipments) {
+      const result = { warehouse: shipment.warehouse, shipment_id: shipment.shipment_id }
+      try {
+        // Step 1: fetch rl-quote-data for weight + destination
+        const rlRes = await apiFetch(`${API_URL}/shipments/${shipment.shipment_id}/rl-quote-data`)
+        const rlData = await rlRes.json()
+        if (rlData.status !== 'ok') throw new Error(rlData.message || 'Failed to load quote data')
+
+        result.weight = rlData.weight?.value
+        result.weight_note = rlData.weight?.note
+        result.origin_zip = rlData.origin_zip
+
+        if (!rlData.weight?.value) {
+          result.error = rlData.weight?.note || 'No weight available'
+          results.push(result)
+          continue
+        }
+
+        // Step 2: run auto-quote
+        const payload = {
+          origin_zip: rlData.origin_zip || '',
+          dest_street: rlData.destination?.street || '',
+          dest_city: rlData.destination?.city || '',
+          dest_state: rlData.destination?.state || '',
+          dest_zipcode: rlData.destination?.zip || '',
+          weight: rlData.weight.value,
+          freight_class: '85',
+          customer_markup: 50.00
+        }
+
+        const quoteRes = await apiFetch(`${API_URL}/proxy/auto-quote`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+        const quoteData = await quoteRes.json()
+
+        if (quoteData.success) {
+          result.carrier_price = quoteData.carrier_price
+          result.customer_price = quoteData.customer_price
+          result.quote_number = quoteData.quote_number
+          result.service_days = quoteData.service_days
+          result.is_residential = quoteData.is_residential
+          result.success = true
+        } else {
+          result.error = 'Quote returned no price'
+        }
+      } catch (err) {
+        result.error = err.message || 'Error'
+      }
+      results.push(result)
+    }
+
+    setMultiQuoteResults(results)
+    setMultiQuoteLoading(false)
   }
 
   const counts = useMemo(() => {
@@ -289,10 +357,16 @@ function App() {
   const handleTabClick = (tab) => { setActiveTab(tab); setStatusFilter(null) }
 
   const openDetail = (order) => {
-    setSelectedOrder(order); setPanelTab('details'); setComprehensiveSummary(''); setInvoiceUrl(null); setInvoiceCopied(false)
+    setSelectedOrder(order)
+    setPanelTab('details')
+    setComprehensiveSummary('')
+    setInvoiceUrl(null)
+    setInvoiceCopied(false)
+    setMultiQuoteResults([])
+    setMultiQuoteLoading(false)
     loadOrderAlerts(order.order_id)
   }
-  const closeDetail = () => { setSelectedOrder(null); setComprehensiveSummary(''); setOrderAlerts([]) }
+  const closeDetail = () => { setSelectedOrder(null); setComprehensiveSummary(''); setOrderAlerts([]); setMultiQuoteResults([]) }
 
   const generateSummary = async () => {
     if (!selectedOrder) return
@@ -354,6 +428,7 @@ function App() {
   if (loading && orders.length === 0) return <div className="loading">Loading orders...</div>
 
   const totalAlerts = alertSummary.total_unresolved || 0
+  const multiQuoteTotal = multiQuoteResults.reduce((sum, r) => sum + (r.customer_price || 0), 0)
 
   return (
     <div className="app">
@@ -501,7 +576,6 @@ function App() {
                   const isSelected = selectedOrder?.order_id === order.order_id
                   const isCanceled = order.lifecycle_status === 'canceled'
                   const isInactive = order.lifecycle_status === 'inactive'
-                  // Multi-warehouse: collect all unique warehouses for this order
                   const orderWarehouses = [...new Set((order.shipments || []).map(s => s.warehouse).filter(Boolean))]
                   const alertBg = order.alert_level === 'critical' ? '#FFF1F1' : order.alert_level === 'warning' ? '#FFFBEB' : undefined
                   const alertLabel = order.alert_type ? ALERT_TYPE_LABELS[order.alert_type] : null
@@ -555,7 +629,6 @@ function App() {
                       </td>
                       <td style={{ color: 'var(--text-dim)', fontSize: '12px' }}>{fmtDate(order.order_date)}</td>
                       <td><span className={`age-cell ${ageClass}`}>{days}d</span></td>
-                      {/* Multi-warehouse: render a tag for each warehouse */}
                       <td>{orderWarehouses.map(w => <span key={w} className="warehouse-tag" style={{display:'block',marginBottom:'2px'}}>{w}</span>)}</td>
 
                       {order.ai_summary && (
@@ -614,7 +687,6 @@ function App() {
                       </div>
                     )}
 
-                    {/* 6-bullet AI state summary — shown at top of Details tab */}
                     {selectedOrder.ai_summary && (
                       <div className="detail-section" style={{ background: '#F8F7FF', border: '1px solid #DDD6FE', borderLeft: '4px solid #7C3AED', borderRadius: '0 6px 6px 0', padding: '12px 14px', marginBottom: '16px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -746,15 +818,60 @@ function App() {
                           </button>
                         </div>
                       )}
-                      {/* Multi-warehouse: one button per shipment/warehouse */}
+
+                      {/* Quote All Warehouses — single action, results shown below */}
+                      {selectedOrder.shipments?.length > 0 && (
+                        <button
+                          className="btn"
+                          onClick={handleQuoteAllLTL}
+                          disabled={multiQuoteLoading}
+                          style={{ borderColor: '#0ea5e9', color: '#0ea5e9', fontWeight: '600' }}
+                        >
+                          {multiQuoteLoading ? '\u23f3 Quoting...' : '\u26a1 Quote All Warehouses (LTL)'}
+                        </button>
+                      )}
+
+                      {/* Multi-quote results */}
+                      {multiQuoteResults.length > 0 && (
+                        <div style={{ background: 'var(--bg-input)', border: '1px solid #0ea5e9', borderRadius: '8px', padding: '12px', fontSize: '13px' }}>
+                          <div style={{ fontWeight: '700', color: '#0ea5e9', marginBottom: '10px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            \u26a1 LTL Quotes \u2014 All Warehouses
+                          </div>
+                          {multiQuoteResults.map((r, i) => (
+                            <div key={r.shipment_id || i} style={{ marginBottom: i < multiQuoteResults.length - 1 ? '10px' : 0, paddingBottom: i < multiQuoteResults.length - 1 ? '10px' : 0, borderBottom: i < multiQuoteResults.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                              <div style={{ fontWeight: '600', marginBottom: '4px' }}>{r.warehouse}</div>
+                              {r.error ? (
+                                <div style={{ color: 'var(--danger)', fontSize: '12px' }}>\u26a0\ufe0f {r.error}</div>
+                              ) : (
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 12px', fontSize: '12px', color: 'var(--text-dim)' }}>
+                                  <span>Weight:</span><span style={{ color: 'var(--text)', fontWeight: '600' }}>{r.weight} lbs</span>
+                                  <span>Carrier:</span><span style={{ color: 'var(--text)', fontWeight: '600' }}>${r.carrier_price?.toFixed(2)}</span>
+                                  <span>Customer (+$50):</span><span style={{ color: 'var(--success)', fontWeight: '700' }}>${r.customer_price?.toFixed(2)}</span>
+                                  {r.quote_number && <><span>Quote #:</span><span style={{ color: 'var(--text)', fontFamily: 'monospace' }}>{r.quote_number}</span></>}
+                                  {r.service_days && <><span>Transit:</span><span style={{ color: 'var(--text)' }}>{r.service_days} days</span></>}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                          {multiQuoteTotal > 0 && (
+                            <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '2px solid #0ea5e9', display: 'flex', justifyContent: 'space-between', fontWeight: '700', fontSize: '13px' }}>
+                              <span>Total Shipping (customer):</span>
+                              <span style={{ color: 'var(--success)' }}>${multiQuoteTotal.toFixed(2)}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Per-warehouse shipping manager buttons */}
                       {selectedOrder.shipments?.length > 0 && selectedOrder.shipments.map((s, i) => (
-                        <button key={s.shipment_id || i} className="btn" onClick={() => openShippingManager(s, selectedOrder)}>&#x1F69A; Ship: {s.warehouse}</button>
+                        <button key={s.shipment_id || i} className="btn" onClick={() => openShippingManager(s, selectedOrder)}>\ud83d\ude9a Ship: {s.warehouse}</button>
                       ))}
+
                       <button className="btn" onClick={() => {
                         apiFetch(`${API_URL}/orders/${selectedOrder.order_id}/generate-summary?force=true`, { method: 'POST' })
                           .then(r => r.json())
                           .then(d => { if (d.summary) setSelectedOrder(prev => ({ ...prev, ai_summary: d.summary })); loadOrders() })
-                      }}>&#x1F9E0; Refresh AI Summary</button>
+                      }}>\ud83e\udde0 Refresh AI Summary</button>
                       <button className="btn btn-danger" onClick={() => { if (confirm('Archive this order?')) updateStatus(selectedOrder.order_id, 'complete') }}>Archive Order</button>
                     </div>
                   </div>
