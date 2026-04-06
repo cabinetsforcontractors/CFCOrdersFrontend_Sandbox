@@ -1,6 +1,6 @@
 /**
  * App.jsx - CFC Orders Dashboard
- * v7.7.0 - Liftgate toggle for Quote All Warehouses (LTL); R+L NET charge direct
+ * v7.8.0 - Add workflow checkpoint buttons to actions panel (Sent to Warehouse, etc.)
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
@@ -104,11 +104,12 @@ function App() {
   const [notesDraft, setNotesDraft] = useState('')
   const [isEditingNotes, setIsEditingNotes] = useState(false)
   const [isSavingNotes, setIsSavingNotes] = useState(false)
+  const [checkpointLoading, setCheckpointLoading] = useState(null)
+  const [checkpointMsg, setCheckpointMsg] = useState(null)
 
   // Multi-warehouse LTL quote-all
   const [multiQuoteResults, setMultiQuoteResults] = useState([])
   const [multiQuoteLoading, setMultiQuoteLoading] = useState(false)
-  // Liftgate toggle for Quote All — one checkbox applies to all warehouses in the run
   const [liftgateForQuoteAll, setLiftgateForQuoteAll] = useState(false)
 
   useEffect(() => { if (localStorage.getItem('cfc_logged_in') === 'true') setIsLoggedIn(true) }, [])
@@ -232,8 +233,41 @@ function App() {
     setTimeout(() => setInvoiceCopied(false), 2000)
   }
 
+  // ==========================================================================
+  // WORKFLOW CHECKPOINT
+  // ==========================================================================
+  const handleCheckpoint = async (checkpoint) => {
+    if (!selectedOrder) return
+    setCheckpointLoading(checkpoint)
+    setCheckpointMsg(null)
+    try {
+      const res = await apiFetch(`${API_URL}/orders/${selectedOrder.order_id}/checkpoint`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checkpoint, source: 'web_ui' })
+      })
+      const data = await res.json()
+      if (data.status === 'ok') {
+        setSelectedOrder(prev => ({ ...prev, [checkpoint]: true }))
+        // Show poll confirmation if warehouse was notified
+        if (checkpoint === 'sent_to_warehouse' && data.supplier_polls?.length) {
+          const count = data.supplier_polls.filter(p => p.poll_sent).length
+          setCheckpointMsg(`✅ Sent to warehouse. Poll email sent to ${count} supplier(s).`)
+        } else {
+          setCheckpointMsg(`✅ ${checkpoint.replace(/_/g, ' ')} marked.`)
+        }
+        loadOrders()
+      } else {
+        setCheckpointMsg(`⚠️ ${data.detail || 'Checkpoint update failed'}`)
+      }
+    } catch (err) {
+      setCheckpointMsg(`⚠️ ${err.message}`)
+    }
+    setCheckpointLoading(null)
+    setTimeout(() => setCheckpointMsg(null), 5000)
+  }
+
   // Quote all shipments via LTL auto-quote in sequence
-  // liftgateForQuoteAll applies to all warehouses in this run (commercial addresses without a dock)
   const handleQuoteAllLTL = async () => {
     if (!selectedOrder?.shipments?.length) return
     setMultiQuoteLoading(true)
@@ -250,7 +284,7 @@ function App() {
         result.weight = rlData.weight?.value
         result.weight_note = rlData.weight?.note
         result.origin_zip = rlData.origin_zip
-        result.is_residential = rlData.is_residential !== false  // default true
+        result.is_residential = rlData.is_residential !== false
 
         if (!rlData.weight?.value) {
           result.error = rlData.weight?.note || 'No weight available'
@@ -267,7 +301,6 @@ function App() {
           weight: rlData.weight.value,
           freight_class: '85',
           customer_markup: 50.00,
-          // For commercial addresses, apply the liftgate toggle
           liftgate_required: result.is_residential ? false : liftgateForQuoteAll,
         }
 
@@ -369,6 +402,7 @@ function App() {
     setMultiQuoteResults([])
     setMultiQuoteLoading(false)
     setLiftgateForQuoteAll(false)
+    setCheckpointMsg(null)
     loadOrderAlerts(order.order_id)
   }
   const closeDetail = () => { setSelectedOrder(null); setComprehensiveSummary(''); setOrderAlerts([]); setMultiQuoteResults([]) }
@@ -417,7 +451,6 @@ function App() {
 
   const handleContentAreaClick = () => { if (selectedOrder) closeDetail() }
 
-  // Determine if any shipment in the selected order is commercial (for liftgate toggle visibility)
   const hasCommercialShipments = selectedOrder?.shipments?.some(s => s.is_residential === false) || false
 
   if (!isLoggedIn) {
@@ -815,30 +848,68 @@ function App() {
                         </div>
                       )}
 
-                      {/* Liftgate toggle — shown for commercial addresses, applies to all warehouses in Quote All */}
+                      {/* ================================================ */}
+                      {/* WORKFLOW CHECKPOINTS */}
+                      {/* ================================================ */}
+                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: '10px', marginTop: '2px' }}>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
+                          Workflow Checkpoints
+                        </div>
+
+                        {/* Payment Received — only if not yet received */}
+                        {!selectedOrder.payment_received && (
+                          <button className="btn" style={{ borderColor: '#059669', color: '#059669', marginBottom: '6px', width: '100%' }}
+                            onClick={() => handleCheckpoint('payment_received')}
+                            disabled={checkpointLoading === 'payment_received'}>
+                            {checkpointLoading === 'payment_received' ? '⏳ Marking...' : '✅ Mark Payment Received'}
+                          </button>
+                        )}
+
+                        {/* Sent to Warehouse — fires supplier poll */}
+                        {!selectedOrder.sent_to_warehouse && (
+                          <button className="btn" style={{ borderColor: '#2196f3', color: '#2196f3', fontWeight: '700', marginBottom: '6px', width: '100%' }}
+                            onClick={() => handleCheckpoint('sent_to_warehouse')}
+                            disabled={checkpointLoading === 'sent_to_warehouse'}>
+                            {checkpointLoading === 'sent_to_warehouse' ? '⏳ Sending...' : '📦 Sent to Warehouse → Polls Supplier'}
+                          </button>
+                        )}
+
+                        {/* Warehouse Confirmed — manual fallback if supplier didn't click */}
+                        {selectedOrder.sent_to_warehouse && !selectedOrder.warehouse_confirmed && (
+                          <button className="btn" style={{ borderColor: '#9c27b0', color: '#9c27b0', marginBottom: '6px', width: '100%' }}
+                            onClick={() => handleCheckpoint('warehouse_confirmed')}
+                            disabled={checkpointLoading === 'warehouse_confirmed'}>
+                            {checkpointLoading === 'warehouse_confirmed' ? '⏳ Marking...' : '✅ Warehouse Confirmed (manual)'}
+                          </button>
+                        )}
+
+                        {/* Mark Complete */}
+                        {selectedOrder.bol_sent && !selectedOrder.is_complete && (
+                          <button className="btn" style={{ borderColor: '#607d8b', color: '#607d8b', marginBottom: '6px', width: '100%' }}
+                            onClick={() => handleCheckpoint('is_complete')}
+                            disabled={checkpointLoading === 'is_complete'}>
+                            {checkpointLoading === 'is_complete' ? '⏳ Marking...' : '✅ Mark Complete'}
+                          </button>
+                        )}
+
+                        {/* Checkpoint feedback message */}
+                        {checkpointMsg && (
+                          <div style={{ background: checkpointMsg.startsWith('⚠️') ? '#FFF3CD' : '#D1FAE5', border: `1px solid ${checkpointMsg.startsWith('⚠️') ? '#FCD34D' : '#6EE7B7'}`, borderRadius: '6px', padding: '8px 10px', fontSize: '13px', color: checkpointMsg.startsWith('⚠️') ? '#92400E' : '#065F46', marginTop: '4px' }}>
+                            {checkpointMsg}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Liftgate toggle */}
                       {selectedOrder.shipments?.length > 0 && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid var(--border)', paddingTop: '10px' }}>
                           {hasCommercialShipments && (
-                            <label style={{
-                              display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer',
-                              background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '6px',
-                              padding: '8px 10px', fontSize: '13px', color: '#1E40AF', fontWeight: '500'
-                            }}>
-                              <input
-                                type="checkbox"
-                                checked={liftgateForQuoteAll}
-                                onChange={e => setLiftgateForQuoteAll(e.target.checked)}
-                                style={{ width: '15px', height: '15px', cursor: 'pointer' }}
-                              />
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '6px', padding: '8px 10px', fontSize: '13px', color: '#1E40AF', fontWeight: '500' }}>
+                              <input type="checkbox" checked={liftgateForQuoteAll} onChange={e => setLiftgateForQuoteAll(e.target.checked)} style={{ width: '15px', height: '15px', cursor: 'pointer' }} />
                               🏢 Destination liftgate required (no dock)
                             </label>
                           )}
-                          <button
-                            className="btn"
-                            onClick={handleQuoteAllLTL}
-                            disabled={multiQuoteLoading}
-                            style={{ borderColor: '#0ea5e9', color: '#0ea5e9', fontWeight: '600' }}
-                          >
+                          <button className="btn" onClick={handleQuoteAllLTL} disabled={multiQuoteLoading} style={{ borderColor: '#0ea5e9', color: '#0ea5e9', fontWeight: '600' }}>
                             {multiQuoteLoading ? '\u23f3 Quoting...' : '\u26a1 Quote All Warehouses (LTL)'}
                           </button>
                         </div>
@@ -878,7 +949,7 @@ function App() {
                         </div>
                       )}
 
-                      {/* Per-warehouse shipping manager buttons */}
+                      {/* Per-warehouse shipping manager */}
                       {selectedOrder.shipments?.length > 0 && selectedOrder.shipments.map((s, i) => (
                         <button key={s.shipment_id || i} className="btn" onClick={() => openShippingManager(s, selectedOrder)}>\ud83d\ude9a Ship: {s.warehouse}</button>
                       ))}
