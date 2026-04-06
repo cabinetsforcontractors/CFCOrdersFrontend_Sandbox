@@ -1,10 +1,11 @@
 /**
  * RLQuoteHelper.jsx
  * Complete RL Carriers quote and BOL helper
- * v5.9.3 - Internal liftgate checkbox for commercial addresses
+ * v6.0.0 - Phase 8: Generate BOL button added
  *
  * Auto-quote flow: validate address (Smarty) → R+L freight quote (NET = all-in price)
  * Manual flow: Open RL website, enter quote details manually
+ * BOL flow: Generate BOL via R+L API → PRO number returned → stored on shipment
  *
  * data.is_residential: from rl-quote-data endpoint (Smarty-validated, stored at checkout)
  * Liftgate checkbox is internal state — shown only for commercial addresses
@@ -26,10 +27,17 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
   const [autoQuoteResult, setAutoQuoteResult] = useState(null)
   const [autoQuoteError, setAutoQuoteError] = useState(null)
 
+  // BOL state
+  const [bolGenerating, setBolGenerating] = useState(false)
+  const [bolResult, setBolResult] = useState(null)
+  const [bolError, setBolError] = useState(null)
+  const [pickupDate, setPickupDate] = useState('')
+
   // Liftgate is internal state — only relevant for commercial addresses
   const [liftgateChecked, setLiftgateChecked] = useState(false)
 
   const isCommercial = data.is_residential === false
+  const bolAlreadySent = !!data.bol_sent
 
   const customerPrice = quotePrice ? (parseFloat(quotePrice) + 50).toFixed(2) : null
 
@@ -101,6 +109,38 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
       alert('Failed to save quote. Please try again.')
     }
     setSaving(false)
+  }
+
+  const handleGenerateBOL = async () => {
+    if (bolAlreadySent && !bolResult) {
+      if (!window.confirm('A BOL has already been generated for this shipment. Generate another?')) return
+    }
+    setBolGenerating(true)
+    setBolError(null)
+    setBolResult(null)
+
+    try {
+      const params = new URLSearchParams()
+      if (pickupDate) params.append('pickup_date', pickupDate)
+
+      const res = await apiFetch(`${API_URL}/bol/${shipmentId}/create?${params.toString()}`, {
+        method: 'POST',
+      })
+
+      const result = await res.json()
+
+      if (!res.ok) {
+        throw new Error(result.detail || `BOL creation failed (${res.status})`)
+      }
+
+      setBolResult(result)
+      if (onSave) onSave()
+    } catch (err) {
+      console.error('BOL generation failed:', err)
+      setBolError(err.message || 'BOL generation failed. Check the console.')
+    }
+
+    setBolGenerating(false)
   }
 
   const openRLSite = () => {
@@ -319,7 +359,114 @@ const RLQuoteHelper = ({ shipmentId, data, onClose, onSave, onOpenRL }) => {
         </div>
       </div>
 
-      {/* Section 3: BOL Helper */}
+      {/* Section 3: Generate BOL */}
+      <div className="rl-section bol-generate" style={{
+        border: '2px solid #1a365d',
+        borderRadius: '8px',
+        padding: '16px',
+        marginTop: '12px',
+        background: bolAlreadySent && !bolResult ? '#f0fdf4' : '#fafafa'
+      }}>
+        <h3 style={{ color: '#1a365d', marginBottom: '10px' }}>
+          {bolAlreadySent && !bolResult ? '✅ BOL Already Generated' : '📄 Generate BOL'}
+        </h3>
+
+        {bolAlreadySent && !bolResult && (
+          <div style={{ fontSize: '13px', color: '#166534', marginBottom: '10px' }}>
+            A BOL has already been created for this shipment. PRO number stored on the shipment record.
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '10px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <label style={{ fontSize: '12px', fontWeight: '600', color: '#555' }}>
+              Pickup Date (optional — defaults to today)
+            </label>
+            <input
+              type="date"
+              value={pickupDate}
+              onChange={e => setPickupDate(e.target.value)}
+              style={{
+                padding: '8px 10px', border: '1px solid #cbd5e0',
+                borderRadius: '4px', fontSize: '14px', fontFamily: 'inherit'
+              }}
+            />
+          </div>
+
+          <button
+            onClick={handleGenerateBOL}
+            disabled={bolGenerating}
+            style={{
+              backgroundColor: bolGenerating ? '#999' : '#1a365d',
+              color: 'white',
+              border: 'none',
+              padding: '10px 24px',
+              borderRadius: '6px',
+              cursor: bolGenerating ? 'wait' : 'pointer',
+              fontWeight: '700',
+              fontSize: '14px',
+              height: '38px',
+            }}
+          >
+            {bolGenerating ? '⏳ Generating...' : '📄 Generate BOL via R+L'}
+          </button>
+        </div>
+
+        {bolError && (
+          <div style={{
+            padding: '10px 14px', backgroundColor: '#fee2e2',
+            border: '1px solid #fca5a5', borderRadius: '6px',
+            color: '#991b1b', fontSize: '13px'
+          }}>
+            ❌ {bolError}
+          </div>
+        )}
+
+        {bolResult && (
+          <div style={{
+            padding: '14px', backgroundColor: '#d1fae5',
+            border: '1px solid #6ee7b7', borderRadius: '6px',
+            fontSize: '13px', color: '#111'
+          }}>
+            <strong style={{ color: '#065f46', fontSize: '15px' }}>✅ BOL Created Successfully</strong>
+            <div style={{ marginTop: '10px', display: 'grid', gridTemplateColumns: '140px 1fr', gap: '6px', rowGap: '8px' }}>
+              <span style={{ fontWeight: '600' }}>PRO Number:</span>
+              <strong style={{ color: '#065f46', fontSize: '15px', fontFamily: 'monospace' }}>{bolResult.pro_number}</strong>
+              <span style={{ fontWeight: '600' }}>Warehouse:</span>
+              <span>{bolResult.warehouse}</span>
+              <span style={{ fontWeight: '600' }}>Shipper Name:</span>
+              <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>{bolResult.shipper_name}</span>
+              <span style={{ fontWeight: '600' }}>Weight:</span>
+              <span>{bolResult.weight_lbs} lbs</span>
+              <span style={{ fontWeight: '600' }}>Delivery Type:</span>
+              <span>{bolResult.is_residential ? '🏠 Residential' : '🏢 Commercial'}</span>
+            </div>
+            {bolResult.bol_pdf_url && (
+              <div style={{ marginTop: '12px' }}>
+                <a
+                  href={bolResult.bol_pdf_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'inline-block',
+                    backgroundColor: '#059669',
+                    color: 'white',
+                    padding: '8px 18px',
+                    borderRadius: '6px',
+                    textDecoration: 'none',
+                    fontWeight: '600',
+                    fontSize: '13px'
+                  }}
+                >
+                  Track / View BOL →
+                </a>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Section 4: BOL Copy Helper */}
       <div className="rl-section bol-helper">
         <h3>BOL Helper - Copy for RL Form</h3>
         <div className="address-section">
