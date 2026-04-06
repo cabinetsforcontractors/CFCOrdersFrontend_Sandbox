@@ -1,7 +1,7 @@
 /**
  * OrderCard.jsx
  * Display a single order with status, customer info, shipments
- * v5.12.1 - Phase 5C: replaced all fetch() with apiFetch() for X-Admin-Token injection
+ * v5.12.2 - Fix: warehouses now derived from order.shipments (not warehouse_1/2/3/4 columns)
  */
 
 import { useState } from 'react'
@@ -88,12 +88,8 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
     ? new Date(order.order_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : ''
 
-  const warehouses = [
-    order.warehouse_1,
-    order.warehouse_2,
-    order.warehouse_3,
-    order.warehouse_4
-  ].filter(Boolean)
+  // Derive warehouses from shipments — shows ALL warehouses regardless of how many
+  const warehouses = [...new Set((order.shipments || []).map(s => s.warehouse).filter(Boolean))]
 
   const orderTotal = parseFloat(order.order_total || 0)
   const totalDisplay = orderTotal > 0
@@ -271,7 +267,7 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
         </div>
 
         {warehouses.length > 0 && (
-          <div className="warehouses">
+          <div className="warehouses" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
             {warehouses.map((wh, i) => {
               const shipment = order.shipments?.find(s => s.warehouse === wh)
               const shipmentStatus = shipment?.status || 'needs_order'
@@ -424,7 +420,7 @@ const OrderCard = ({ order, onOpenDetail, onOpenShippingManager, onOpenEmail, on
               gap: '6px'
             }}
           >
-            \ud83d\udce7 Email Customer
+            📧 Email Customer
           </button>
         </div>
       )}
