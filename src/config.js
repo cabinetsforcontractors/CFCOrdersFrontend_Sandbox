@@ -24,4 +24,6 @@ export const OTHER_ENV_URL = IS_SANDBOX
   ? 'https://cfc-orders-frontend.vercel.app'
   : 'https://cfcordersfrontend-sandbox.vercel.app'
 
+export const B2BWAVE_ORDER_URL = 'https://cabinetsforcontractors.b2bwave.com/orders'
+
 export const OTHER_ENV_LABEL = IS_SANDBOX ? 'Live' : 'Sandbox'
