@@ -113,7 +113,7 @@ const ShipmentRow = ({ shipment, order, onOpenShippingManager, onUpdate }) => {
     <div className={`shipment-row${updating ? ' updating' : ''}`}>
       <div className="shipment-warehouse">
         <strong>{shipment.warehouse}</strong>
-        {shippingCost && <span style={{ color: 'var(--success)', marginLeft: '8px' }}>— {shippingCost}</span>}
+        {shippingCost && <span style={{ color: 'var(--success)', marginLeft: '8px' }}>&mdash; {shippingCost}</span>}
         {shipment.weight && <span style={{ color: 'var(--text-muted)', marginLeft: '6px', fontSize: '11px' }}>({shipment.weight} lbs)</span>}
       </div>
 
@@ -125,14 +125,6 @@ const ShipmentRow = ({ shipment, order, onOpenShippingManager, onUpdate }) => {
         <select value={shipment.ship_method || ''} onChange={handleMethodChange} style={{ minWidth: '130px' }}>
           {METHOD_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
         </select>
-
-        <button
-          className={`btn btn-sm${hasQuoteInfo ? ' btn-primary' : ''}`}
-          onClick={() => onOpenShippingManager(shipment, order)}
-          style={hasQuoteInfo ? {} : {}}
-        >
-          {hasQuoteInfo ? '✅ Shipping' : 'Shipping'}
-        </button>
 
         {showTrackButton && (
           shipment.tracking_number ? (
