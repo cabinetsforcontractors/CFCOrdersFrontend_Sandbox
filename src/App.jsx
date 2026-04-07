@@ -9,7 +9,7 @@ import ShipmentRow from './components/ShipmentRow'
 import EmailPanel from './components/EmailPanel'
 import BrainChat from './components/BrainChat'
 
-import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL } from './config'
+import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL, B2BWAVE_ORDER_URL } from './config'
 import { apiFetch } from './api'
 
 const STATUSES = [
@@ -105,6 +105,7 @@ function App() {
   const [isEditingNotes, setIsEditingNotes] = useState(false)
   const [isSavingNotes, setIsSavingNotes] = useState(false)
   const [checkpointLoading, setCheckpointLoading] = useState(null)
+  const [pollLoading, setPollLoading] = useState({})
   const [checkpointMsg, setCheckpointMsg] = useState(null)
 
   // Multi-warehouse LTL quote-all
@@ -252,16 +253,16 @@ function App() {
         // Show poll confirmation if warehouse was notified
         if (checkpoint === 'sent_to_warehouse' && data.supplier_polls?.length) {
           const count = data.supplier_polls.filter(p => p.poll_sent).length
-          setCheckpointMsg(`✅ Sent to warehouse. Poll email sent to ${count} supplier(s).`)
+          setCheckpointMsg(`\u2705 Sent to warehouse. Poll email sent to ${count} supplier(s).`)
         } else {
-          setCheckpointMsg(`✅ ${checkpoint.replace(/_/g, ' ')} marked.`)
+          setCheckpointMsg(`\u2705 ${checkpoint.replace(/_/g, ' ')} marked.`)
         }
         loadOrders()
       } else {
-        setCheckpointMsg(`⚠️ ${data.detail || 'Checkpoint update failed'}`)
+        setCheckpointMsg(`\u26a0\ufe0f ${data.detail || 'Checkpoint update failed'}`)
       }
     } catch (err) {
-      setCheckpointMsg(`⚠️ ${err.message}`)
+      setCheckpointMsg(`\u26a0\ufe0f ${err.message}`)
     }
     setCheckpointLoading(null)
     setTimeout(() => setCheckpointMsg(null), 5000)
@@ -453,6 +454,33 @@ function App() {
 
   const hasCommercialShipments = selectedOrder?.shipments?.some(s => s.is_residential === false) || false
 
+  const renderMarkdown = (text) => {
+    if (!text) return ''
+    const lines = text.split('\n')
+    let html = '', inList = false
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (trimmed.startsWith('## ')) {
+        if (inList) { html += '</ul>'; inList = false }
+        html += `<h4 style="color:var(--accent);margin:12px 0 6px">${trimmed.slice(3)}</h4>`
+      } else if (/^[-*]\s/.test(trimmed)) {
+        if (!inList) { html += '<ul style="margin:4px 0;padding-left:20px">'; inList = true }
+        html += `<li>${trimmed.slice(2).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')}</li>`
+      } else if (/^\d+\.\s/.test(trimmed)) {
+        if (inList) { html += '</ul>'; inList = false }
+        html += `<div style="margin:2px 0">${trimmed.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')}</div>`
+      } else if (trimmed === '') {
+        if (inList) { html += '</ul>'; inList = false }
+        html += '<br/>'
+      } else {
+        if (inList) { html += '</ul>'; inList = false }
+        html += `<div>${trimmed.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')}</div>`
+      }
+    }
+    if (inList) html += '</ul>'
+    return html
+  }
+
   if (!isLoggedIn) {
     return (
       <div className="login-container">
@@ -636,6 +664,9 @@ function App() {
                         {order.payment_received && (
                           <span style={{ display: 'inline-block', marginLeft: '4px', background: 'rgba(5,150,105,0.12)', color: '#059669', border: '1px solid rgba(5,150,105,0.3)', borderRadius: '4px', fontSize: '10px', fontWeight: '700', padding: '1px 5px', verticalAlign: 'middle' }}>PAID</span>
                         )}
+                        {order.is_pickup && (
+                          <span style={{ display: 'inline-block', marginLeft: '4px', background: 'rgba(5,150,105,0.12)', color: '#059669', border: '1px solid rgba(5,150,105,0.3)', borderRadius: '4px', fontSize: '10px', fontWeight: '700', padding: '1px 5px', verticalAlign: 'middle' }}>PICKUP</span>
+                        )}
                         {alertLabel && <div style={{ fontSize: '10px', fontWeight: '700', color: order.alert_level === 'critical' ? '#DC2626' : '#D97706', marginTop: '3px' }}>{alertLabel}</div>}
                       </td>
                       <td>
@@ -692,13 +723,16 @@ function App() {
                   {selectedOrder.payment_received && (
                     <span style={{ marginLeft: '8px', background: 'rgba(5,150,105,0.12)', color: '#059669', border: '1px solid rgba(5,150,105,0.3)', borderRadius: '4px', fontSize: '10px', fontWeight: '700', padding: '2px 6px' }}>PAID</span>
                   )}
+                  {selectedOrder.is_pickup && (
+                    <span style={{ marginLeft: '8px', background: 'rgba(5,150,105,0.12)', color: '#059669', border: '1px solid rgba(5,150,105,0.3)', borderRadius: '4px', fontSize: '10px', fontWeight: '700', padding: '2px 6px' }}>PICKUP</span>
+                  )}
                 </h3>
                 <button className="panel-close" onClick={closeDetail}>{'\u00D7'}</button>
               </div>
 
               <div className="panel-tabs">
                 <button className={`panel-tab${panelTab === 'details' ? ' active' : ''}`} onClick={() => setPanelTab('details')}>Details</button>
-                <button className={`panel-tab${panelTab === 'ai' ? ' active' : ''}`} onClick={() => setPanelTab('ai')}>AI Summary</button>
+                <button className={`panel-tab${panelTab === 'fullanalysis' ? ' active' : ''}`} onClick={() => setPanelTab('fullanalysis')}>Full Analysis</button>
                 <button className={`panel-tab${panelTab === 'actions' ? ' active' : ''}`} onClick={() => setPanelTab('actions')}>Actions</button>
               </div>
 
@@ -759,6 +793,7 @@ function App() {
                       {selectedOrder.payment_received && selectedOrder.payment_amount && (
                         <div className="detail-row"><span className="detail-label">Paid Amount</span><span className="detail-value mono">{fmtMoney(selectedOrder.payment_amount)}</span></div>
                       )}
+                      <a href={`${B2BWAVE_ORDER_URL}/${selectedOrder.order_id}`} target="_blank" rel="noopener noreferrer" className="btn btn-sm" style={{ fontSize: '11px', marginTop: '6px' }}>\ud83d\udd17 View in B2BWave</a>
                     </div>
 
                     {selectedOrder.shipments?.length > 0 && (
@@ -794,7 +829,15 @@ function App() {
                     <div className="detail-section">
                       <h4>Change Status</h4>
                       <select value={selectedOrder.current_status}
-                        onChange={e => { updateStatus(selectedOrder.order_id, e.target.value); setSelectedOrder({ ...selectedOrder, current_status: e.target.value }) }}
+                        onChange={async (e) => {
+                          const val = e.target.value
+                          if (val === 'complete' && !confirm('Move order #' + selectedOrder.order_id + ' to Done?')) { e.target.value = selectedOrder.current_status; return }
+                          try {
+                            await apiFetch(`${API_URL}/orders/${selectedOrder.order_id}/set-status?status=${val}`, { method: 'PATCH' })
+                            setSelectedOrder({ ...selectedOrder, current_status: val })
+                            loadOrders()
+                          } catch (err) { console.error('Status update failed:', err) }
+                        }}
                         style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text)', fontFamily: 'inherit', fontSize: '13px' }}>
                         {STATUSES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
                       </select>
@@ -802,7 +845,7 @@ function App() {
                   </>
                 )}
 
-                {panelTab === 'ai' && (
+                {panelTab === 'fullanalysis' && (
                   <div className="detail-section">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                       <h4 style={{ margin: 0 }}>Full AI Analysis</h4>
@@ -815,11 +858,11 @@ function App() {
                           <div style={{ color: 'var(--text-dim)', fontSize: '13px' }}>Analyzing order data...</div>
                         </div>
                       ) : comprehensiveSummary ? (
-                        <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6', fontSize: '13px', color: 'var(--text)' }}>{comprehensiveSummary}</div>
+                        <div style={{ lineHeight: '1.7', fontSize: '13px', color: 'var(--text)' }} dangerouslySetInnerHTML={{ __html: renderMarkdown(comprehensiveSummary) }} />
                       ) : selectedOrder.ai_summary ? (
                         <>
                           <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Current 6-Bullet State Summary</div>
-                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.7', fontSize: '13px', color: 'var(--text)' }}>{selectedOrder.ai_summary}</div>
+                          <div style={{ lineHeight: '1.7', fontSize: '13px', color: 'var(--text)' }} dangerouslySetInnerHTML={{ __html: renderMarkdown(selectedOrder.ai_summary) }} />
                           <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid var(--border)' }} />
                           <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center' }}>Click Generate for a full historical analysis</div>
                         </>
@@ -845,6 +888,7 @@ function App() {
                           <button className="btn btn-sm" onClick={handleCopyInvoiceUrl} style={{ borderColor: 'var(--success)', color: invoiceCopied ? 'var(--success)' : undefined }}>
                             {invoiceCopied ? '\u2705 Copied!' : '\ud83d\udccb Copy Link'}
                           </button>
+                          <button className="btn btn-sm" onClick={() => { navigator.clipboard.writeText(invoiceUrl + (invoiceUrl.includes('?') ? '&' : '?') + 'view=quote'); }} style={{ borderColor: '#6366f1', color: '#6366f1', marginLeft: '6px' }}>\ud83d\udccb Copy Quote Link</button>
                         </div>
                       )}
 
@@ -856,30 +900,38 @@ function App() {
                           Workflow Checkpoints
                         </div>
 
-                        {/* Payment Received — only if not yet received */}
+                        {/* Payment Received \u2014 only if not yet received */}
                         {!selectedOrder.payment_received && (
                           <button className="btn" style={{ borderColor: '#059669', color: '#059669', marginBottom: '6px', width: '100%' }}
                             onClick={() => handleCheckpoint('payment_received')}
                             disabled={checkpointLoading === 'payment_received'}>
-                            {checkpointLoading === 'payment_received' ? '⏳ Marking...' : '✅ Mark Payment Received'}
+                            {checkpointLoading === 'payment_received' ? '\u23f3 Marking...' : '\u2705 Mark Payment Received'}
                           </button>
                         )}
 
-                        {/* Sent to Warehouse — fires supplier poll */}
-                        {!selectedOrder.sent_to_warehouse && (
-                          <button className="btn" style={{ borderColor: '#2196f3', color: '#2196f3', fontWeight: '700', marginBottom: '6px', width: '100%' }}
-                            onClick={() => handleCheckpoint('sent_to_warehouse')}
-                            disabled={checkpointLoading === 'sent_to_warehouse'}>
-                            {checkpointLoading === 'sent_to_warehouse' ? '⏳ Sending...' : '📦 Sent to Warehouse → Polls Supplier'}
+                        {/* Per-shipment send-poll buttons (replaces single sent_to_warehouse) */}
+                        {selectedOrder.shipments && selectedOrder.shipments.filter(sh => !sh.supplier_poll_1_sent_at).map(sh => (
+                          <button key={sh.shipment_id} className="btn" style={{ borderColor: '#2196f3', color: '#2196f3', fontWeight: '700', marginBottom: '6px', width: '100%' }}
+                            onClick={async () => {
+                              setPollLoading(prev => ({ ...prev, [sh.shipment_id]: 'loading' }))
+                              try {
+                                const res = await apiFetch(`${API_URL}/supplier/${sh.shipment_id}/send-poll`, { method: 'POST' })
+                                if (!res.ok) throw new Error('Poll failed')
+                                setPollLoading(prev => ({ ...prev, [sh.shipment_id]: 'done' }))
+                                loadOrders(); if (selectedOrder) openDetail(selectedOrder)
+                              } catch (err) { setPollLoading(prev => ({ ...prev, [sh.shipment_id]: 'error' })); console.error(err) }
+                            }}
+                            disabled={pollLoading[sh.shipment_id] === 'loading'}>
+                            {pollLoading[sh.shipment_id] === 'loading' ? '\u23f3 Sending...' : pollLoading[sh.shipment_id] === 'done' ? '\u2705 Sent' : `\ud83d\udce6 Send to Warehouse: ${sh.warehouse}`}
                           </button>
-                        )}
+                        ))}
 
-                        {/* Warehouse Confirmed — manual fallback if supplier didn't click */}
+                        {/* Warehouse Confirmed \u2014 manual fallback if supplier didn't click */}
                         {selectedOrder.sent_to_warehouse && !selectedOrder.warehouse_confirmed && (
                           <button className="btn" style={{ borderColor: '#9c27b0', color: '#9c27b0', marginBottom: '6px', width: '100%' }}
                             onClick={() => handleCheckpoint('warehouse_confirmed')}
                             disabled={checkpointLoading === 'warehouse_confirmed'}>
-                            {checkpointLoading === 'warehouse_confirmed' ? '⏳ Marking...' : '✅ Warehouse Confirmed (manual)'}
+                            {checkpointLoading === 'warehouse_confirmed' ? '\u23f3 Marking...' : '\u2705 Warehouse Confirmed (manual)'}
                           </button>
                         )}
 
@@ -888,13 +940,13 @@ function App() {
                           <button className="btn" style={{ borderColor: '#607d8b', color: '#607d8b', marginBottom: '6px', width: '100%' }}
                             onClick={() => handleCheckpoint('is_complete')}
                             disabled={checkpointLoading === 'is_complete'}>
-                            {checkpointLoading === 'is_complete' ? '⏳ Marking...' : '✅ Mark Complete'}
+                            {checkpointLoading === 'is_complete' ? '\u23f3 Marking...' : '\u2705 Mark Complete'}
                           </button>
                         )}
 
                         {/* Checkpoint feedback message */}
                         {checkpointMsg && (
-                          <div style={{ background: checkpointMsg.startsWith('⚠️') ? '#FFF3CD' : '#D1FAE5', border: `1px solid ${checkpointMsg.startsWith('⚠️') ? '#FCD34D' : '#6EE7B7'}`, borderRadius: '6px', padding: '8px 10px', fontSize: '13px', color: checkpointMsg.startsWith('⚠️') ? '#92400E' : '#065F46', marginTop: '4px' }}>
+                          <div style={{ background: checkpointMsg.startsWith('\u26a0\ufe0f') ? '#FFF3CD' : '#D1FAE5', border: `1px solid ${checkpointMsg.startsWith('\u26a0\ufe0f') ? '#FCD34D' : '#6EE7B7'}`, borderRadius: '6px', padding: '8px 10px', fontSize: '13px', color: checkpointMsg.startsWith('\u26a0\ufe0f') ? '#92400E' : '#065F46', marginTop: '4px' }}>
                             {checkpointMsg}
                           </div>
                         )}
@@ -906,7 +958,7 @@ function App() {
                           {hasCommercialShipments && (
                             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '6px', padding: '8px 10px', fontSize: '13px', color: '#1E40AF', fontWeight: '500' }}>
                               <input type="checkbox" checked={liftgateForQuoteAll} onChange={e => setLiftgateForQuoteAll(e.target.checked)} style={{ width: '15px', height: '15px', cursor: 'pointer' }} />
-                              🏢 Destination liftgate required (no dock)
+                              \ud83c\udfe2 Destination liftgate required (no dock)
                             </label>
                           )}
                           <button className="btn" onClick={handleQuoteAllLTL} disabled={multiQuoteLoading} style={{ borderColor: '#0ea5e9', color: '#0ea5e9', fontWeight: '600' }}>
@@ -925,7 +977,7 @@ function App() {
                             <div key={r.shipment_id || i} style={{ marginBottom: i < multiQuoteResults.length - 1 ? '10px' : 0, paddingBottom: i < multiQuoteResults.length - 1 ? '10px' : 0, borderBottom: i < multiQuoteResults.length - 1 ? '1px solid var(--border)' : 'none' }}>
                               <div style={{ fontWeight: '600', marginBottom: '4px' }}>
                                 {r.warehouse}
-                                {r.is_residential === false && <span style={{ marginLeft: '6px', fontSize: '11px', color: '#1E40AF', background: '#EFF6FF', padding: '1px 5px', borderRadius: '3px' }}>🏢 Commercial</span>}
+                                {r.is_residential === false && <span style={{ marginLeft: '6px', fontSize: '11px', color: '#1E40AF', background: '#EFF6FF', padding: '1px 5px', borderRadius: '3px' }}>\ud83c\udfe2 Commercial</span>}
                               </div>
                               {r.error ? (
                                 <div style={{ color: 'var(--danger)', fontSize: '12px' }}>\u26a0\ufe0f {r.error}</div>
@@ -954,12 +1006,7 @@ function App() {
                         <button key={s.shipment_id || i} className="btn" onClick={() => openShippingManager(s, selectedOrder)}>\ud83d\ude9a Ship: {s.warehouse}</button>
                       ))}
 
-                      <button className="btn" onClick={() => {
-                        apiFetch(`${API_URL}/orders/${selectedOrder.order_id}/generate-summary?force=true`, { method: 'POST' })
-                          .then(r => r.json())
-                          .then(d => { if (d.summary) setSelectedOrder(prev => ({ ...prev, ai_summary: d.summary })); loadOrders() })
-                      }}>\ud83e\udde0 Refresh AI Summary</button>
-                      <button className="btn btn-danger" onClick={() => { if (confirm('Archive this order?')) updateStatus(selectedOrder.order_id, 'complete') }}>Archive Order</button>
+                      <button className="btn btn-danger" onClick={async () => { if (confirm('Mark order #' + selectedOrder.order_id + ' as Done?')) { await apiFetch(`${API_URL}/orders/${selectedOrder.order_id}/set-status?status=complete`, { method: 'PATCH' }); closeDetail(); loadOrders() } }}>Done</button>
                     </div>
                   </div>
                 )}
