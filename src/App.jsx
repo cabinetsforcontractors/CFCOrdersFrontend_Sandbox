@@ -1,6 +1,6 @@
 /**
  * App.jsx - CFC Orders Dashboard
- * v7.8.0 - Add workflow checkpoint buttons to actions panel (Sent to Warehouse, etc.)
+ * v7.9.0 - Add Quotes tab to admin UI with Send Quote Email button
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
@@ -113,6 +113,12 @@ function App() {
   const [multiQuoteLoading, setMultiQuoteLoading] = useState(false)
   const [liftgateForQuoteAll, setLiftgateForQuoteAll] = useState(false)
 
+  // Quotes tab
+  const [quotesData, setQuotesData] = useState([])
+  const [quotesLoading, setQuotesLoading] = useState(false)
+  const [abandonedCount, setAbandonedCount] = useState(0)
+  const [quoteSending, setQuoteSending] = useState(null)
+
   useEffect(() => { if (localStorage.getItem('cfc_logged_in') === 'true') setIsLoggedIn(true) }, [])
   useEffect(() => { if (isLoggedIn) { loadOrders(); loadAlertSummary() } }, [isLoggedIn])
   useEffect(() => { setNotesDraft(selectedOrder?.notes || ''); setIsEditingNotes(false); setIsSavingNotes(false) }, [selectedOrder?.order_id])
@@ -194,6 +200,41 @@ function App() {
     if (alertsOpen) document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [alertsOpen])
+
+  // Load quotes when quotes tab is selected
+  useEffect(() => {
+    if (activeTab !== 'quotes') return
+    const loadQuotes = async () => {
+      setQuotesLoading(true)
+      try {
+        const res = await apiFetch(`${API_URL}/quotes/list`)
+        const data = await res.json()
+        if (data.quotes) setQuotesData(data.quotes)
+      } catch (err) { console.error('Failed to load quotes:', err) }
+      setQuotesLoading(false)
+    }
+    const loadAbandonedCarts = async () => {
+      try {
+        const res = await apiFetch(`${API_URL}/quotes/abandoned-carts`)
+        const data = await res.json()
+        if (data.count !== undefined) setAbandonedCount(data.count)
+      } catch (err) { console.error('Failed to load abandoned carts:', err) }
+    }
+    loadQuotes()
+    loadAbandonedCarts()
+  }, [activeTab])
+
+  const sendQuoteEmail = async (orderId) => {
+    setQuoteSending(orderId)
+    try {
+      const res = await apiFetch(`${API_URL}/quotes/${orderId}/send`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        setQuotesData(prev => prev.map(q => q.order_id === orderId ? { ...q, quote_sent: true } : q))
+      }
+    } catch (err) { console.error('Failed to send quote:', err) }
+    setQuoteSending(null)
+  }
 
   const handleSaveNotes = async () => {
     if (!selectedOrder) return
@@ -616,13 +657,62 @@ function App() {
                 style={activeTab === 'done' ? { backgroundColor: 'rgba(107,114,128,0.10)', borderColor: '#6b7280', color: '#6b7280' } : {}}>
                 Done <span className="tab-count">{lifecycleCounts.done}</span>
               </button>
+              <span style={{ width: '1px', height: '24px', background: 'var(--border)', margin: '0 4px' }} />
+              <button className={`tab-btn${activeTab === 'quotes' ? ' active' : ''}`} onClick={() => handleTabClick('quotes')}
+                style={activeTab === 'quotes' ? { backgroundColor: 'rgba(59,130,246,0.10)', borderColor: '#3b82f6', color: '#3b82f6' } : {}}>
+                Quotes {abandonedCount > 0 && <span className="tab-count">{abandonedCount} carts</span>}
+              </button>
             </div>
             <div className="tab-actions">
               {statusFilter && <button className="btn btn-sm" onClick={() => setStatusFilter(null)}>Clear filter</button>}
             </div>
           </div>
 
-          {filteredOrders.length === 0 ? (
+          {activeTab === 'quotes' ? (
+            <div style={{ padding: '16px 0' }}>
+              {quotesLoading ? (
+                <div className="empty">Loading quotes...</div>
+              ) : quotesData.length === 0 ? (
+                <div className="empty">No quotes found</div>
+              ) : (
+                <table className="orders-table">
+                  <thead>
+                    <tr>
+                      <th>Order ID</th>
+                      <th>Customer</th>
+                      <th>Company</th>
+                      <th>Total</th>
+                      <th>Products</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {quotesData.map(q => (
+                      <tr key={q.order_id}>
+                        <td><span className="order-id">#{q.order_id}</span></td>
+                        <td>{q.customer_name || q.email || '\u2014'}</td>
+                        <td>{q.company_name || '\u2014'}</td>
+                        <td>{fmtMoney(q.order_total)}</td>
+                        <td style={{ maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {(q.products || []).map(p => p.name || p.sku).join(', ') || '\u2014'}
+                        </td>
+                        <td>
+                          <button
+                            className="btn btn-sm"
+                            disabled={quoteSending === q.order_id || q.quote_sent}
+                            onClick={() => sendQuoteEmail(q.order_id)}
+                            style={q.quote_sent ? { backgroundColor: 'rgba(5,150,105,0.12)', color: '#059669', borderColor: 'rgba(5,150,105,0.3)' } : {}}
+                          >
+                            {quoteSending === q.order_id ? 'Sending...' : q.quote_sent ? '\u2705 Sent' : 'Send Quote Email'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ) : filteredOrders.length === 0 ? (
             <div className="empty">No orders found</div>
           ) : (
             <table className="orders-table">
