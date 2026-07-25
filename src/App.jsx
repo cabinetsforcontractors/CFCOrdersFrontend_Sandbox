@@ -78,6 +78,7 @@ function App() {
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState('')
   const [orders, setOrders] = useState([])
+  const [testHiddenCount, setTestHiddenCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('all')
   const [statusFilter, setStatusFilter] = useState(null)
@@ -136,7 +137,11 @@ function App() {
     try {
       const res = await apiFetch(`${API_URL}/orders?limit=200&include_complete=true`)
       const data = await res.json()
-      if (data.orders) setOrders(data.orders)
+      if (data.orders) {
+        // Test-order registry (Beat 1): rows flagged is_test never render
+        setTestHiddenCount(data.orders.filter(o => o.is_test).length)
+        setOrders(data.orders.filter(o => !o.is_test))
+      }
     } catch (err) { console.error('Failed to load orders:', err) }
     setLoading(false)
   }, [])
@@ -670,6 +675,12 @@ function App() {
               </button>
             </div>
             <div className="tab-actions">
+              {testHiddenCount > 0 && (
+                <span style={{ color: 'var(--muted, #888)', fontSize: '12px', marginRight: '10px' }}
+                  title="Registered test/noise orders are hidden everywhere. Manage via GET/POST /test-orders.">
+                  {testHiddenCount} test orders hidden
+                </span>
+              )}
               {statusFilter && <button className="btn btn-sm" onClick={() => setStatusFilter(null)}>Clear filter</button>}
             </div>
           </div>
