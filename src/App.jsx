@@ -8,6 +8,7 @@ import ShippingManager from './components/ShippingManager'
 import ShipmentRow from './components/ShipmentRow'
 import EmailPanel from './components/EmailPanel'
 import BrainChat from './components/BrainChat'
+import TaskBoard from './components/TaskBoard'
 
 import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL, B2BWAVE_ORDER_URL } from './config'
 import { apiFetch } from './api'
@@ -662,13 +663,20 @@ function App() {
                 style={activeTab === 'quotes' ? { backgroundColor: 'rgba(59,130,246,0.10)', borderColor: '#3b82f6', color: '#3b82f6' } : {}}>
                 Quotes {abandonedCount > 0 && <span className="tab-count">{abandonedCount} carts</span>}
               </button>
+              <span style={{ width: '1px', height: '24px', background: 'var(--border)', margin: '0 4px' }} />
+              <button className={`tab-btn${activeTab === 'tasks' ? ' active' : ''}`} onClick={() => handleTabClick('tasks')}
+                style={activeTab === 'tasks' ? { backgroundColor: 'rgba(16,185,129,0.10)', borderColor: '#10b981', color: '#10b981' } : {}}>
+                Tasks
+              </button>
             </div>
             <div className="tab-actions">
               {statusFilter && <button className="btn btn-sm" onClick={() => setStatusFilter(null)}>Clear filter</button>}
             </div>
           </div>
 
-          {activeTab === 'quotes' ? (
+          {activeTab === 'tasks' ? (
+            <TaskBoard />
+          ) : activeTab === 'quotes' ? (
             <div style={{ padding: '16px 0' }}>
               {quotesLoading ? (
                 <div className="empty">Loading quotes...</div>
