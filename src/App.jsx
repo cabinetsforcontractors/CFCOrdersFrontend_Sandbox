@@ -649,6 +649,11 @@ function App() {
                 Inactive <span className="tab-count">{lifecycleCounts.inactive}</span>
               </button>
               <span style={{ width: '1px', height: '24px', background: 'var(--border)', margin: '0 4px' }} />
+              <button className={`tab-btn${activeTab === 'tasks' ? ' active' : ''}`} onClick={() => handleTabClick('tasks')}
+                style={activeTab === 'tasks' ? { backgroundColor: 'rgba(16,185,129,0.10)', borderColor: '#10b981', color: '#10b981' } : { borderColor: 'rgba(16,185,129,0.3)', color: '#10b981' }}>
+                Tasks
+              </button>
+              <span style={{ width: '1px', height: '24px', background: 'var(--border)', margin: '0 4px' }} />
               {ACTIVE_STATUS_KEYS.map(key => {
                 const s = STATUS_MAP[key]; const isActive = statusFilter === key
                 return (
@@ -667,11 +672,6 @@ function App() {
               <button className={`tab-btn${activeTab === 'quotes' ? ' active' : ''}`} onClick={() => handleTabClick('quotes')}
                 style={activeTab === 'quotes' ? { backgroundColor: 'rgba(59,130,246,0.10)', borderColor: '#3b82f6', color: '#3b82f6' } : {}}>
                 Quotes {abandonedCount > 0 && <span className="tab-count">{abandonedCount} carts</span>}
-              </button>
-              <span style={{ width: '1px', height: '24px', background: 'var(--border)', margin: '0 4px' }} />
-              <button className={`tab-btn${activeTab === 'tasks' ? ' active' : ''}`} onClick={() => handleTabClick('tasks')}
-                style={activeTab === 'tasks' ? { backgroundColor: 'rgba(16,185,129,0.10)', borderColor: '#10b981', color: '#10b981' } : {}}>
-                Tasks
               </button>
             </div>
             <div className="tab-actions">
