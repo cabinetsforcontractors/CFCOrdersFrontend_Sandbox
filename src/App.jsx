@@ -436,7 +436,7 @@ function App() {
 
   const handleMetricClick = (key) => {
     if (key === 'complete') { setActiveTab('done'); setStatusFilter(null) }
-    else { if (activeTab === 'done') setActiveTab('all'); setStatusFilter(statusFilter === key ? null : key) }
+    else { if (activeTab !== 'all' && activeTab !== 'inactive') setActiveTab('all'); setStatusFilter(statusFilter === key ? null : key) }
   }
 
   const handleTabClick = (tab) => { setActiveTab(tab); setStatusFilter(null) }
@@ -653,7 +653,7 @@ function App() {
                 const s = STATUS_MAP[key]; const isActive = statusFilter === key
                 return (
                   <button key={key} className={`tab-btn${isActive ? ' active' : ''}`}
-                    onClick={() => { if (activeTab === 'done') setActiveTab('all'); setStatusFilter(isActive ? null : key) }}>
+                    onClick={() => { if (activeTab !== 'all' && activeTab !== 'inactive') setActiveTab('all'); setStatusFilter(isActive ? null : key) }}>
                     {s.short} <span className="tab-count">{counts[key]}</span>
                   </button>
                 )
