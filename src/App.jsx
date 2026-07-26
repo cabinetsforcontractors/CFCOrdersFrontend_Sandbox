@@ -738,10 +738,10 @@ function App() {
               <thead>
                 <tr>
                   <th onClick={() => handleSort('order_id')}>Order {sortCol === 'order_id' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
+                  <th onClick={() => handleSort('order_date')}>Date {sortCol === 'order_date' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
                   <th onClick={() => handleSort('company_name')}>Customer {sortCol === 'company_name' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
                   <th onClick={() => handleSort('current_status')}>Status</th>
                   <th onClick={() => handleSort('order_total')}>Total {sortCol === 'order_total' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
-                  <th onClick={() => handleSort('order_date')}>Date {sortCol === 'order_date' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
                   <th onClick={() => handleSort('days_open')}>Age {sortCol === 'days_open' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</th>
                   <th>Warehouse</th>
                 </tr>
@@ -778,6 +778,7 @@ function App() {
                         )}
                         {alertLabel && <div style={{ fontSize: '10px', fontWeight: '700', color: order.alert_level === 'critical' ? '#DC2626' : '#D97706', marginTop: '3px' }}>{alertLabel}</div>}
                       </td>
+                      <td style={{ color: 'var(--text-dim)', fontSize: '12px' }}>{fmtDate(order.order_date)}</td>
                       <td>
                         <div className="customer-name">{order.company_name || order.customer_name || '\u2014'}</div>
                         {order.city && <div className="customer-company">{order.city}{order.state ? `, ${order.state}` : ''}</div>}
@@ -808,7 +809,6 @@ function App() {
                           <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontWeight: '600' }}>Total: ${(orderTotal + shipping.charge).toFixed(2)}</div>
                         )}
                       </td>
-                      <td style={{ color: 'var(--text-dim)', fontSize: '12px' }}>{fmtDate(order.order_date)}</td>
                       <td><span className={`age-cell ${ageClass}`}>{days}d</span></td>
                       <td>{orderWarehouses.map(w => <span key={w} className="warehouse-tag" style={{display:'block',marginBottom:'2px'}}>{w}</span>)}</td>
                     </tr>
