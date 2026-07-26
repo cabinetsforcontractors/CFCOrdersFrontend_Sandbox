@@ -19,7 +19,15 @@ import { useState, useEffect, useCallback } from 'react'
 import { API_URL } from '../config'
 import { apiFetch } from '../api'
 
+const ACTION_OPTIONS = [
+  ['', 'Mark order…'],
+  ['payment_link_sent', 'Invoice / payment link sent'],
+  ['payment_received',  'Payment received'],
+  ['is_complete',       'Picked up / delivered / complete'],
+]
+
 const TYPE_LABELS = [
+  ['follow-up',       'Follow-ups (yours)'],
   ['robot-flag',      'Robot flags — needs a human'],
   ['unread-customer', 'Customer emails (unread)'],
   ['unread-supplier', 'Supplier emails (unread)'],
@@ -47,6 +55,10 @@ export default function TaskBoard() {
   const [sweeping, setSweeping] = useState(false)
   const [error, setError] = useState(null)
   const [drafts, setDrafts] = useState({})
+  const [picks, setPicks] = useState({})           // task_key -> dropdown action
+  const [fuOpen, setFuOpen] = useState(null)       // order_id with follow-up box open
+  const [fuText, setFuText] = useState({})
+  const [fuDue, setFuDue] = useState({})
   const [busyKey, setBusyKey] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)   // task_key pending 2nd yes
   const [banner, setBanner] = useState(null)
@@ -85,10 +97,62 @@ export default function TaskBoard() {
       })
       const d = await res.json()
       if (d.status !== 'ok') throw new Error(d.message || `HTTP ${res.status}`)
-      if ((d.smart_actions || []).length) flash(`Robot also updated the order: ${d.smart_actions.join(', ')}`)
       await load()
       setDrafts(x => { const n = { ...x }; delete n[taskKey]; return n })
     } catch (e) { alert(`Note failed: ${e}`) } finally { setBusyKey(null) }
+  }
+
+  const fireAction = async (taskKey) => {
+    const action = picks[taskKey]
+    if (!action) return
+    setBusyKey(taskKey)
+    try {
+      const res = await apiFetch(`${API_URL}/tasks/action`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_key: taskKey, action }),
+      })
+      const d = await res.json()
+      if (d.status !== 'ok') throw new Error(d.message || 'failed')
+      flash(`Order #${d.order_id}: ${d.label} ✓`)
+      setPicks(x => { const n = { ...x }; delete n[taskKey]; return n })
+      await load()
+    } catch (e) { alert(`Action failed: ${e}`) } finally { setBusyKey(null) }
+  }
+
+  const markDone = async (taskKey) => {
+    setBusyKey(taskKey)
+    try {
+      await apiFetch(`${API_URL}/tasks/done`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_key: taskKey }),
+      })
+      await load()
+    } finally { setBusyKey(null) }
+  }
+
+  const changeDue = async (taskKey, due) => {
+    if (!due) return
+    await apiFetch(`${API_URL}/tasks/due`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_key: taskKey, due_date: due }),
+    })
+    await load()
+  }
+
+  const addFollowUp = async (orderId) => {
+    const text = (fuText[orderId] || '').trim()
+    if (!text) return
+    const res = await apiFetch(`${API_URL}/tasks/manual`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, order_id: orderId, due_date: fuDue[orderId] || 'tomorrow' }),
+    })
+    const d = await res.json()
+    if (d.status === 'ok') {
+      setFuOpen(null)
+      setFuText(x => { const n = { ...x }; delete n[orderId]; return n })
+      flash(`Follow-up added on #${orderId}${d.due_date ? ` — ${d.due_date}` : ''}`)
+      await load()
+    } else alert(d.message || 'follow-up failed')
   }
 
   const emailAction = async (taskKey, action) => {
@@ -153,13 +217,38 @@ export default function TaskBoard() {
           <td>{t.order_id ? <span className="order-id">#{t.order_id}</span> : '—'}</td>
           <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(t.date_str)}</td>
           <td>
-            <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
-              <input type="text" value={drafts[t.task_key] ?? ''} placeholder="what you did / decided"
-                onChange={e => setDrafts(x => ({ ...x, [t.task_key]: e.target.value }))}
-                onKeyDown={e => { if (e.key === 'Enter' && (drafts[t.task_key] || '').trim()) saveNote(t.task_key, drafts[t.task_key].trim()) }}
-                style={{ flex: 1, minWidth: '150px', padding: '4px 8px' }} />
-              <button className="btn btn-sm" disabled={busyKey === t.task_key || !(drafts[t.task_key] || '').trim()}
-                onClick={() => saveNote(t.task_key, drafts[t.task_key].trim())}>Save</button>
+            <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center' }}>
+              {(t.type === 'manual' || t.type === 'follow-up') ? (
+                <>
+                  <button className="btn btn-sm" disabled={busyKey === t.task_key}
+                    style={{ background: 'rgba(5,150,105,0.12)', color: '#059669', fontWeight: 700 }}
+                    onClick={() => markDone(t.task_key)}>Done</button>
+                  <input type="date" defaultValue={t.due_date || ''} title="change follow-up date"
+                    onChange={e => changeDue(t.task_key, e.target.value)} style={{ padding: '3px' }} />
+                </>
+              ) : (
+                <>
+                  <input type="text" value={drafts[t.task_key] ?? ''} placeholder="note (never triggers anything)"
+                    onChange={e => setDrafts(x => ({ ...x, [t.task_key]: e.target.value }))}
+                    onKeyDown={e => { if (e.key === 'Enter' && (drafts[t.task_key] || '').trim()) saveNote(t.task_key, drafts[t.task_key].trim()) }}
+                    style={{ flex: 1, minWidth: '130px', padding: '4px 8px' }} />
+                  <button className="btn btn-sm" disabled={busyKey === t.task_key || !(drafts[t.task_key] || '').trim()}
+                    onClick={() => saveNote(t.task_key, drafts[t.task_key].trim())}>Save</button>
+                </>
+              )}
+              {t.order_id && t.type !== 'manual' && t.type !== 'follow-up' && (
+                <>
+                  <select value={picks[t.task_key] || ''}
+                    onChange={e => setPicks(x => ({ ...x, [t.task_key]: e.target.value }))}
+                    style={{ padding: '4px' }}>
+                    {ACTION_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                  <button className="btn btn-sm" disabled={busyKey === t.task_key || !picks[t.task_key]}
+                    onClick={() => fireAction(t.task_key)}>Apply</button>
+                  <button className="btn btn-sm" title="add a follow-up task on this order"
+                    onClick={() => setFuOpen(o => (o === t.order_id ? null : t.order_id))}>+ Follow-up</button>
+                </>
+              )}
               {t.gmail_id && t.type.startsWith('unread') && (
                 <>
                   <button className="btn btn-sm" disabled={busyKey === t.task_key}
@@ -174,6 +263,18 @@ export default function TaskBoard() {
                 </>
               )}
             </div>
+            {fuOpen && t.order_id === fuOpen && t.type !== 'manual' && t.type !== 'follow-up' && (
+              <div style={{ display: 'flex', gap: '5px', marginTop: '6px', flexWrap: 'wrap' }}>
+                <input type="text" value={fuText[t.order_id] ?? ''} placeholder={`follow-up on #${t.order_id} — e.g. call them`}
+                  onChange={e => setFuText(x => ({ ...x, [t.order_id]: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') addFollowUp(t.order_id) }}
+                  style={{ flex: 1, minWidth: '180px', padding: '4px 8px' }} />
+                <input type="date" value={fuDue[t.order_id] ?? ''} onChange={e => setFuDue(x => ({ ...x, [t.order_id]: e.target.value }))}
+                  style={{ padding: '3px' }} title="defaults to tomorrow" />
+                <button className="btn btn-sm" onClick={() => addFollowUp(t.order_id)}
+                  disabled={!(fuText[t.order_id] || '').trim()}>Add</button>
+              </div>
+            )}
           </td>
         </tr>
       ))}
