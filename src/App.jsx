@@ -9,6 +9,7 @@ import ShipmentRow from './components/ShipmentRow'
 import EmailPanel from './components/EmailPanel'
 import BrainChat from './components/BrainChat'
 import TaskBoard from './components/TaskBoard'
+import OrderTimeline from './components/OrderTimeline'
 
 import { API_URL, APP_PASSWORD, IS_SANDBOX, OTHER_ENV_URL, B2BWAVE_ORDER_URL } from './config'
 import { apiFetch } from './api'
@@ -841,11 +842,15 @@ function App() {
 
               <div className="panel-tabs">
                 <button className={`panel-tab${panelTab === 'details' ? ' active' : ''}`} onClick={() => setPanelTab('details')}>Details</button>
+                <button className={`panel-tab${panelTab === 'timeline' ? ' active' : ''}`} onClick={() => setPanelTab('timeline')}>Timeline</button>
                 <button className={`panel-tab${panelTab === 'fullanalysis' ? ' active' : ''}`} onClick={() => setPanelTab('fullanalysis')}>Full Analysis</button>
                 <button className={`panel-tab${panelTab === 'actions' ? ' active' : ''}`} onClick={() => setPanelTab('actions')}>Actions</button>
               </div>
 
               <div className="panel-content">
+                {panelTab === 'timeline' && (
+                  <OrderTimeline orderId={selectedOrder.order_id} />
+                )}
                 {panelTab === 'details' && (
                   <>
                     {orderAlerts.length > 0 && (
