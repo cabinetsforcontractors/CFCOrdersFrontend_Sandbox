@@ -95,7 +95,23 @@ export default function TaskBoard() {
     } catch { setArchive([]) }
   }
 
-  useEffect(() => { load() }, [load])
+  // Sweep-on-open (William 2026-07-29, Phase 1): the board reflects what he
+  // just did in Gmail — load the cached board instantly, then run a sweep
+  // and reload so read/handled state is current without waiting a cycle.
+  useEffect(() => {
+    let alive = true
+    load().then(async () => {
+      if (!alive) return
+      setSweeping(true)
+      try {
+        await apiFetch(`${API_URL}/tasks/sweep`, { method: 'POST' })
+        if (alive) await load()
+      } catch { /* board still shows last sweep */ }
+      finally { if (alive) setSweeping(false) }
+    })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const flash = (msg) => { setBanner(msg); setTimeout(() => setBanner(null), 7000) }
 

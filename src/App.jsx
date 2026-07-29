@@ -950,6 +950,19 @@ function App() {
                       <select value={selectedOrder.current_status}
                         onChange={async (e) => {
                           const val = e.target.value
+                          if (val === 'delete_order') {
+                            // tombstone: kills links, cancels supplier legs, B2BWave -> Canceled (silent), hidden everywhere
+                            if (!confirm('DELETE order #' + selectedOrder.order_id + ' end to end?\n\nPayment links killed, supplier legs canceled, B2BWave set to Canceled, all emails stop, hidden from the app.')) { e.target.value = selectedOrder.current_status; return }
+                            if (!confirm('Are you SURE? This is the full delete for #' + selectedOrder.order_id + '.')) { e.target.value = selectedOrder.current_status; return }
+                            try {
+                              const r = await apiFetch(`${API_URL}/orders/${selectedOrder.order_id}/tombstone`, { method: 'POST' })
+                              const d = await r.json()
+                              if (d.status !== 'ok') throw new Error(JSON.stringify(d))
+                              closeDetail()
+                              loadOrders()
+                            } catch (err) { alert('Delete failed: ' + err) }
+                            return
+                          }
                           if (val === 'complete' && !confirm('Move order #' + selectedOrder.order_id + ' to Done?')) { e.target.value = selectedOrder.current_status; return }
                           try {
                             await apiFetch(`${API_URL}/orders/${selectedOrder.order_id}/set-status?status=${val}`, { method: 'PATCH' })
@@ -959,6 +972,7 @@ function App() {
                         }}
                         style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text)', fontFamily: 'inherit', fontSize: '13px' }}>
                         {STATUSES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+                        <option value="delete_order">🗑 Delete order (end to end)</option>
                       </select>
                     </div>
                   </>
