@@ -69,6 +69,10 @@ export default function TaskBoard() {
   const [plaudText, setPlaudText] = useState('')
   const [plaudView, setPlaudView] = useState(null)           // {title, body}
 
+  const [rundown, setRundown] = useState(null)
+  const [showArchive, setShowArchive] = useState(false)
+  const [archive, setArchive] = useState(null)
+
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
@@ -76,7 +80,20 @@ export default function TaskBoard() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setData(await res.json())
     } catch (e) { setError(String(e)) } finally { setLoading(false) }
+    try {
+      const rr = await apiFetch(`${API_URL}/tasks/rundown?z=${Date.now()}`)
+      if (rr.ok) setRundown(await rr.json())
+    } catch { /* rundown is decoration — board still works */ }
   }, [])
+
+  const loadArchive = async () => {
+    if (showArchive) { setShowArchive(false); return }
+    setShowArchive(true)
+    try {
+      const r = await apiFetch(`${API_URL}/tasks/archive`)
+      if (r.ok) setArchive((await r.json()).archive || [])
+    } catch { setArchive([]) }
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -312,6 +329,31 @@ export default function TaskBoard() {
         </div>
       )}
 
+      {rundown && (
+        <div style={{ border: '1px solid var(--border, #ddd)', borderRadius: '8px', padding: '14px 16px', marginBottom: '18px', background: 'rgba(29,78,216,0.04)' }}>
+          <h2 style={{ margin: '0 0 10px', fontSize: '17px' }}>☀️ RUNDOWN</h2>
+          {[
+            ['💰 Payments landed (24h)', (rundown.payments_last24h || []).map(p => `#${p.order_id} — ${p.customer || ''}`)],
+            ['🚨 Needs you', (rundown.needs_you || []).map(t => t.title)],
+            ['✉️ Drafts waiting', (rundown.drafts_waiting || []).map(t => t.title)],
+            ['🏭 Supplier actions', (rundown.supplier_actions || []).map(t => t.title)],
+            ['📅 Due today', (rundown.due_today || []).map(t => t.title + (t.order_id ? ` (#${t.order_id})` : ''))],
+            ['🚚 Deliveries & claims (24h)', (rundown.deliveries_and_claims_last24h || []).map(d => `#${d.order_id}`)],
+            ['⏳ Awaiting payment', (rundown.awaiting_payment || []).map(o => `#${o.order_id} — ${o.customer} $${Number(o.total).toLocaleString()} (${o.days_open}d)`)],
+          ].map(([label, items]) => (
+            <div key={label} style={{ marginBottom: '6px', fontSize: '13px' }}>
+              <strong>{label}:</strong>{' '}
+              {items.length === 0
+                ? <span style={{ color: 'var(--muted, #888)' }}>none</span>
+                : items.slice(0, 8).map((s, i) => (
+                    <span key={i} style={{ marginRight: '10px' }}>{s}{i < Math.min(items.length, 8) - 1 ? ' ·' : ''}</span>
+                  ))}
+              {items.length > 8 && <span style={{ color: 'var(--muted, #888)' }}> +{items.length - 8} more</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
       <h2 style={{ margin: '4px 0 10px', fontSize: '18px' }}>ORDER TASKS — {orderTasks.length}</h2>
       {renderBoard(orderTasks)}
 
@@ -356,6 +398,34 @@ export default function TaskBoard() {
           </table>
         </div>
       )}
+
+      <div style={{ marginTop: '20px' }}>
+        <button className="btn btn-sm" onClick={loadArchive}>
+          {showArchive ? 'Hide archive' : 'View archive'}
+        </button>
+        {showArchive && (
+          <div style={{ marginTop: '8px' }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: '14px' }}>
+              ARCHIVE — completed tasks, kept 3 months ({(archive || []).length})
+            </h3>
+            {archive === null ? <div className="empty">Loading…</div> : (
+              <table className="orders-table">
+                <thead><tr><th>Task</th><th>Order</th><th>Outcome</th><th>When</th></tr></thead>
+                <tbody>
+                  {archive.map(t => (
+                    <tr key={t.task_key} style={{ opacity: 0.7 }}>
+                      <td style={{ maxWidth: '340px' }}>{t.title}</td>
+                      <td>{t.order_id ? <span className="order-id">#{t.order_id}</span> : '—'}</td>
+                      <td style={{ maxWidth: '300px' }}>{t.note || (t.status === 'gone' ? '(source resolved itself)' : '')}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(t.updated_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
 
       <div style={{ marginTop: '26px' }}>
         <h3 style={{ margin: '0 0 6px', fontSize: '14px' }}>DONE RECENTLY — robot activity, last 3 days ({(data?.done_events || []).length})</h3>
