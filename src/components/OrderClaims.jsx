@@ -14,6 +14,26 @@ import { useState, useEffect } from 'react'
 import { API_URL } from '../config'
 import { apiFetch } from '../api'
 
+/** Authenticated image: fetches photo bytes with admin headers, renders a
+ *  thumbnail that opens full-size in a new tab. */
+const AuthImg = ({ src }) => {
+  const [url, setUrl] = useState(null)
+  useEffect(() => {
+    let objUrl = null
+    apiFetch(src)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => { if (b) { objUrl = URL.createObjectURL(b); setUrl(objUrl) } })
+      .catch(() => {})
+    return () => { if (objUrl) URL.revokeObjectURL(objUrl) }
+  }, [src])
+  if (!url) return <div style={{ width: 74, height: 74, background: '#f1f5f9', borderRadius: 6 }} />
+  return (
+    <a href={url} target="_blank" rel="noreferrer">
+      <img src={url} alt="" style={{ width: 74, height: 74, objectFit: 'cover', borderRadius: 6, border: '1px solid #e2e8f0' }} />
+    </a>
+  )
+}
+
 const ISSUE_LABELS = {
   freight_damage_bol: 'Freight damage (BOL noted)',
   freight_damage_nobol: 'Freight damage (NOT on BOL)',
@@ -36,6 +56,8 @@ const OrderClaims = ({ orderId }) => {
   const [claims, setClaims] = useState(null)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [deliveryPhotos, setDeliveryPhotos] = useState([])
+  const [openPhotos, setOpenPhotos] = useState({})   // claim id -> photo meta list
 
   const load = () => {
     apiFetch(`${API_URL}/claims?order_id=${orderId}`)
@@ -45,14 +67,31 @@ const OrderClaims = ({ orderId }) => {
       })
       .then((data) => setClaims(data.claims || []))
       .catch((e) => setError(e.message))
+    apiFetch(`${API_URL}/delivery-photos/${orderId}/list`)
+      .then((r) => (r.ok ? r.json() : { photos: [] }))
+      .then((data) => setDeliveryPhotos(data.photos || []))
+      .catch(() => {})
   }
 
   useEffect(() => {
     setClaims(null)
     setError(null)
+    setDeliveryPhotos([])
+    setOpenPhotos({})
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId])
+
+  const togglePhotos = (claimId) => {
+    if (openPhotos[claimId]) {
+      setOpenPhotos((p) => ({ ...p, [claimId]: null }))
+      return
+    }
+    apiFetch(`${API_URL}/claims/${claimId}/detail`)
+      .then((r) => r.json())
+      .then((data) => setOpenPhotos((p) => ({ ...p, [claimId]: (data.claim || {}).photos || [] })))
+      .catch(() => {})
+  }
 
   const openForm = () => {
     setBusy(true)
@@ -120,7 +159,13 @@ const OrderClaims = ({ orderId }) => {
             </select>
           </div>
           <div style={{ color: '#555', marginTop: '4px' }}>
-            BOL noted: <strong>{c.bol_noted || '?'}</strong> · photos: <strong>{c.photo_count}</strong>
+            BOL noted: <strong>{c.bol_noted || '?'}</strong> ·{' '}
+            <button
+              onClick={() => togglePhotos(c.id)}
+              style={{ background: 'none', border: 'none', color: '#1D4ED8', cursor: 'pointer', fontWeight: 600, padding: 0 }}
+            >
+              {openPhotos[c.id] ? 'hide' : 'show'} photos ({c.photo_count})
+            </button>
           </div>
           {(c.lines || []).map((l, i) => (
             <div key={i} style={{ marginTop: '3px', color: '#333' }}>
@@ -128,8 +173,29 @@ const OrderClaims = ({ orderId }) => {
               {l.note ? <span style={{ color: '#777' }}> ({l.note})</span> : null}
             </div>
           ))}
+          {openPhotos[c.id] && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+              {openPhotos[c.id].length === 0 && (
+                <span style={{ color: '#888', fontSize: '12px' }}>No photos on this claim.</span>
+              )}
+              {openPhotos[c.id].map((p) => (
+                <AuthImg key={p.id} src={`${API_URL}/claims/photo/${p.id}`} />
+              ))}
+            </div>
+          )}
         </div>
       ))}
+      <h4 style={{ marginTop: '18px' }}>📷 At-delivery photos ({deliveryPhotos.length})</h4>
+      {deliveryPhotos.length === 0 && (
+        <div style={{ color: '#666', fontSize: '13px' }}>
+          None uploaded — the customer gets the phone upload link in every delivery email.
+        </div>
+      )}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+        {deliveryPhotos.map((p) => (
+          <AuthImg key={p.id} src={`${API_URL}/delivery-photos/photo/${p.id}`} />
+        ))}
+      </div>
     </div>
   )
 }
