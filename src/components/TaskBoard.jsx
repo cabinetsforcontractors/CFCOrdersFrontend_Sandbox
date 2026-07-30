@@ -15,6 +15,9 @@
  *
  * v3.1 (7/30): DONE RECENTLY reads /queue/done-events (b2bwave_sync heartbeat
  * noise excluded server-side); dateless supplier flags say "standing flag".
+ * v3.2 (7/30): DONE RECENTLY shows "What really happened" — a redirected
+ * send SAYS it landed in the safety inbox (William: "it fired to wpjob1 and
+ * it thinks that it fired to lm").
  *
  * Everything else that worked stays: notes, Mark order…, follow-ups,
  * Read/Archive/Delete (2-click), add-a-task, Plaud box, archive, done events.
@@ -549,13 +552,20 @@ export default function TaskBoard() {
               <h3 style={{ margin: '0 0 6px', fontSize: '14px' }}>DONE RECENTLY — robot activity, last 3 days ({doneList.length})</h3>
               {doneList.length === 0 ? <div className="empty">No recorded events.</div> : (
                 <table className="orders-table">
-                  <thead><tr><th>Order</th><th>Event</th><th>Source</th><th>When</th></tr></thead>
+                  <thead><tr><th>Order</th><th>Event</th><th>What really happened</th><th>Source</th><th>When</th></tr></thead>
                   <tbody>
-                    {doneList.map((e, i) => (
-                      <tr key={i}><td><span className="order-id">#{e.order_id}</span></td>
-                        <td>{e.event_type}</td><td>{e.source || '—'}</td>
-                        <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(e.at)}</td></tr>
-                    ))}
+                    {doneList.map((e, i) => {
+                      const redirected = (e.detail || '').includes('SAFETY REDIRECT')
+                      return (
+                        <tr key={i}><td><span className="order-id">#{e.order_id}</span></td>
+                          <td>{e.event_type}</td>
+                          <td style={{ maxWidth: '320px', color: redirected ? '#B45309' : 'var(--muted, #666)', fontWeight: redirected ? 700 : 400 }}>
+                            {e.detail || '—'}
+                          </td>
+                          <td>{e.source || '—'}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(e.at)}</td></tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               )}
