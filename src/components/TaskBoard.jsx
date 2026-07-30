@@ -13,6 +13,9 @@
  *   - ROBOT-SETTLED TRACE: "Robot settle" button runs the auto-settler live
  *     (dry_run=false); anything it closed shows "robot settled this because X".
  *
+ * v3.1 (7/30): DONE RECENTLY reads /queue/done-events (b2bwave_sync heartbeat
+ * noise excluded server-side); dateless supplier flags say "standing flag".
+ *
  * Everything else that worked stays: notes, Mark order…, follow-ups,
  * Read/Archive/Delete (2-click), add-a-task, Plaud box, archive, done events.
  */
@@ -92,6 +95,7 @@ export default function TaskBoard() {
   // money strip + robot settle
   const [strip, setStrip] = useState(null)
   const [settling, setSettling] = useState(false)
+  const [doneEvents, setDoneEvents] = useState(null)   // noise-filtered feed
 
   // reply composer
   const [intents, setIntents] = useState({})        // task_key -> intent text
@@ -111,6 +115,10 @@ export default function TaskBoard() {
       const ms = await apiFetch(`${API_URL}/queue/money-strip?z=${Date.now()}`)
       if (ms.ok) setStrip(await ms.json())
     } catch { /* strip is decoration — board still works */ }
+    try {
+      const de = await apiFetch(`${API_URL}/queue/done-events?z=${Date.now()}`)
+      if (de.ok) setDoneEvents((await de.json()).events || [])
+    } catch { /* falls back to the unfiltered feed below */ }
   }, [])
 
   const loadArchive = async () => {
@@ -343,7 +351,7 @@ export default function TaskBoard() {
               : t.title}
           </span>
           <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap', fontSize: '12px', color: days >= 2 ? '#DC2626' : 'var(--muted, #888)', fontWeight: days >= 2 ? 700 : 400 }}>
-            {fmtDate(t.date_str)} · waiting {ageLabel(t.date_str)}
+            {t.date_str ? `${fmtDate(t.date_str)} · waiting ${ageLabel(t.date_str)}` : 'standing flag'}
           </span>
         </div>
         {(t.detail || t.due_date) && (
@@ -534,19 +542,26 @@ export default function TaskBoard() {
       </div>
 
       <div style={{ marginTop: '26px' }}>
-        <h3 style={{ margin: '0 0 6px', fontSize: '14px' }}>DONE RECENTLY — robot activity, last 3 days ({(data?.done_events || []).length})</h3>
-        {(data?.done_events || []).length === 0 ? <div className="empty">No recorded events.</div> : (
-          <table className="orders-table">
-            <thead><tr><th>Order</th><th>Event</th><th>Source</th><th>When</th></tr></thead>
-            <tbody>
-              {data.done_events.map((e, i) => (
-                <tr key={i}><td><span className="order-id">#{e.order_id}</span></td>
-                  <td>{e.event_type}</td><td>{e.source || '—'}</td>
-                  <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(e.at)}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        {(() => {
+          const doneList = doneEvents ?? (data?.done_events || [])
+          return (
+            <>
+              <h3 style={{ margin: '0 0 6px', fontSize: '14px' }}>DONE RECENTLY — robot activity, last 3 days ({doneList.length})</h3>
+              {doneList.length === 0 ? <div className="empty">No recorded events.</div> : (
+                <table className="orders-table">
+                  <thead><tr><th>Order</th><th>Event</th><th>Source</th><th>When</th></tr></thead>
+                  <tbody>
+                    {doneList.map((e, i) => (
+                      <tr key={i}><td><span className="order-id">#{e.order_id}</span></td>
+                        <td>{e.event_type}</td><td>{e.source || '—'}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(e.at)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
+          )
+        })()}
       </div>
 
       {/* THE PREVIEW POPUP — chain + editable draft + SEND */}
