@@ -10,8 +10,8 @@
  *     "Write & Preview" — popup shows the email chain + the draft (the
  *     William way), you edit if needed, SEND fires it into the real thread.
  *     Preview stays mandatory for now ("as it learns we will turn that off").
- *   - ROBOT-SETTLED TRACE: "Robot settle" button runs the auto-settler live;
- *     anything it closed shows "robot settled this because X".
+ *   - ROBOT-SETTLED TRACE: "Robot settle" button runs the auto-settler live
+ *     (dry_run=false); anything it closed shows "robot settled this because X".
  *
  * Everything else that worked stays: notes, Mark order…, follow-ups,
  * Read/Archive/Delete (2-click), add-a-task, Plaud box, archive, done events.
@@ -149,12 +149,12 @@ export default function TaskBoard() {
   const robotSettle = async () => {
     setSettling(true)
     try {
-      const res = await apiFetch(`${API_URL}/auto-settle/run`, { method: 'POST' })
+      const res = await apiFetch(`${API_URL}/auto-settle/run?dry_run=false`, { method: 'POST' })
       const d = await res.json()
       const done = d.settled || []
       flash(done.length === 0
         ? 'Robot settle: nothing it could safely close.'
-        : `Robot settled ${done.length}: ${done.map(s => `${s.title || s.task_key} (${s.reason})`).join(' · ')}`)
+        : `Robot settled ${done.length}: ${done.map(s => `${s.subject || s.order_id} — because ${s.reason}`).join(' · ')}`)
       await load()
     } catch (e) { alert(`Robot settle failed: ${e}`) } finally { setSettling(false) }
   }
@@ -433,12 +433,10 @@ export default function TaskBoard() {
   return (
     <div style={{ padding: '16px 0' }}>
       {/* MONEY STRIP — one line, always on top (William: "keep that one line") */}
-      {strip && (
+      {strip && strip.line && (
         <div style={{ fontSize: '14px', fontWeight: 600, padding: '8px 14px', marginBottom: '12px',
           border: '1px solid var(--border, #ddd)', borderRadius: '8px', background: 'rgba(5,150,105,0.06)' }}>
-          💰 Landed today ${Number(strip.landed_24h || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} ({strip.landed_count || 0})
-          {' · '}Awaiting ${Number(strip.awaiting_total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} across {strip.awaiting_count || 0} orders
-          {' · '}90-day freight net ${Number(strip.freight_net_90d || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          💰 {strip.line}
         </div>
       )}
 
