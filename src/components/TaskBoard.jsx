@@ -1,18 +1,20 @@
 /**
- * TaskBoard.jsx — Task Board v2 (William's "v2 build", 2026-07-26)
+ * TaskBoard.jsx — QUEUE BOARD v3 (Phase B, William-approved design 2026-07-30)
  *
- * ONE tab, TWO boards stacked (William's layout ruling):
- *   ORDER TASKS — everything order-flavored
- *   OTHER TASKS — other mail, no-reply watch, manual tasks (+ Add-a-task),
- *                 Plaud recorder summaries (+ paste box)
- * Reads the MATERIALIZED board (GET /tasks — instant). Sweep now button
- * re-materializes on demand; the sync cycle re-sweeps automatically.
+ * RULINGS BAKED IN:
+ *   - RUNDOWN IS GONE ("this is really useless it can go away").
+ *   - MONEY STRIP: one line at the top (landed 24h · awaiting · 90-day freight).
+ *   - THE QUEUE: one list, OLDEST FIRST — the thing that's waited longest is
+ *     the thing you deal with first. Cards, not grouped tables.
+ *   - REPLY COMPOSER on every email card: type a rough intent, hit
+ *     "Write & Preview" — popup shows the email chain + the draft (the
+ *     William way), you edit if needed, SEND fires it into the real thread.
+ *     Preview stays mandatory for now ("as it learns we will turn that off").
+ *   - ROBOT-SETTLED TRACE: "Robot settle" button runs the auto-settler live;
+ *     anything it closed shows "robot settled this because X".
  *
- * Note box: saving marks the task HANDLED; on order-linked tasks the robot
- * parses safe intents ("invoice sent", "paid", "picked up") and runs the
- * matching checkpoint — anything it did shows in the green banner.
- * Email rows: Read / Archive / Delete. Delete is TWO clicks (William's
- * double-confirm ruling) and goes to Gmail Trash (30-day failsafe).
+ * Everything else that worked stays: notes, Mark order…, follow-ups,
+ * Read/Archive/Delete (2-click), add-a-task, Plaud box, archive, done events.
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -26,27 +28,43 @@ const ACTION_OPTIONS = [
   ['is_complete',       'Picked up / delivered / complete'],
 ]
 
-const TYPE_LABELS = [
-  ['follow-up',       'Follow-ups (yours)'],
-  ['robot-flag',      'Robot flags — needs a human'],
-  ['unread-customer', 'Customer emails (unread)'],
-  ['unread-supplier', 'Supplier emails (unread)'],
-  ['unread-payment',  'Payment notifications (unread)'],
-  ['unread-website',  'Website notifications (unread)'],
-  ['draft-waiting',   'Drafts waiting for review / send'],
-  ['unpaid-order',    'Unpaid orders'],
-  ['supplier-action', 'Supplier order actions'],
-  ['shipment-watch',  'Shipments riding the poller'],
-  ['no-reply',        'No answer yet — our email, 2+ business days'],
-  ['manual',          'Your tasks'],
-  ['plaud',           'Recorder summaries'],
-  ['unread-other',    'Other unread email'],
-]
+const TYPE_BADGES = {
+  'follow-up':       ['FOLLOW-UP', '#7C3AED'],
+  'robot-flag':      ['ROBOT FLAG', '#DC2626'],
+  'unread-customer': ['CUSTOMER', '#1D4ED8'],
+  'unread-supplier': ['SUPPLIER', '#B45309'],
+  'unread-payment':  ['PAYMENT', '#059669'],
+  'unread-website':  ['WEBSITE', '#0E7490'],
+  'draft-waiting':   ['DRAFT WAITING', '#9333EA'],
+  'unpaid-order':    ['UNPAID', '#DC2626'],
+  'supplier-action': ['SUPPLIER ACTION', '#B45309'],
+  'shipment-watch':  ['SHIPMENT', '#0E7490'],
+  'no-reply':        ['NO REPLY 2d+', '#DC2626'],
+  'manual':          ['YOUR TASK', '#374151'],
+  'plaud':           ['RECORDER', '#374151'],
+  'unread-other':    ['OTHER MAIL', '#6B7280'],
+}
 
 function fmtDate(s) {
   if (!s) return '—'
   const d = new Date(s)
   return isNaN(d) ? s : d.toLocaleString('en-US', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+function ageDays(s) {
+  if (!s) return null
+  const d = new Date(s)
+  if (isNaN(d)) return null
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000)
+  return days
+}
+
+function ageLabel(s) {
+  const d = ageDays(s)
+  if (d === null) return ''
+  if (d <= 0) return 'today'
+  if (d === 1) return '1 day'
+  return `${d} days`
 }
 
 export default function TaskBoard() {
@@ -55,23 +73,32 @@ export default function TaskBoard() {
   const [sweeping, setSweeping] = useState(false)
   const [error, setError] = useState(null)
   const [drafts, setDrafts] = useState({})
-  const [picks, setPicks] = useState({})           // task_key -> dropdown action
-  const [fuOpen, setFuOpen] = useState(null)       // order_id with follow-up box open
+  const [picks, setPicks] = useState({})
+  const [fuOpen, setFuOpen] = useState(null)
   const [fuText, setFuText] = useState({})
   const [fuDue, setFuDue] = useState({})
   const [busyKey, setBusyKey] = useState(null)
-  const [confirmDelete, setConfirmDelete] = useState(null)   // task_key pending 2nd yes
+  const [confirmDelete, setConfirmDelete] = useState(null)
   const [banner, setBanner] = useState(null)
   const [newTask, setNewTask] = useState('')
   const [newTaskDue, setNewTaskDue] = useState('')
   const [plaudOpen, setPlaudOpen] = useState(false)
   const [plaudTitle, setPlaudTitle] = useState('')
   const [plaudText, setPlaudText] = useState('')
-  const [plaudView, setPlaudView] = useState(null)           // {title, body}
-
-  const [rundown, setRundown] = useState(null)
+  const [plaudView, setPlaudView] = useState(null)
   const [showArchive, setShowArchive] = useState(false)
   const [archive, setArchive] = useState(null)
+
+  // money strip + robot settle
+  const [strip, setStrip] = useState(null)
+  const [settling, setSettling] = useState(false)
+
+  // reply composer
+  const [intents, setIntents] = useState({})        // task_key -> intent text
+  const [composeBusy, setComposeBusy] = useState(null)
+  const [preview, setPreview] = useState(null)      // {task, to, subject, draft_body, chain, message_id}
+  const [sendBusy, setSendBusy] = useState(false)
+  const [chainOpen, setChainOpen] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -81,9 +108,9 @@ export default function TaskBoard() {
       setData(await res.json())
     } catch (e) { setError(String(e)) } finally { setLoading(false) }
     try {
-      const rr = await apiFetch(`${API_URL}/tasks/rundown?z=${Date.now()}`)
-      if (rr.ok) setRundown(await rr.json())
-    } catch { /* rundown is decoration — board still works */ }
+      const ms = await apiFetch(`${API_URL}/queue/money-strip?z=${Date.now()}`)
+      if (ms.ok) setStrip(await ms.json())
+    } catch { /* strip is decoration — board still works */ }
   }, [])
 
   const loadArchive = async () => {
@@ -95,9 +122,7 @@ export default function TaskBoard() {
     } catch { setArchive([]) }
   }
 
-  // Sweep-on-open (William 2026-07-29, Phase 1): the board reflects what he
-  // just did in Gmail — load the cached board instantly, then run a sweep
-  // and reload so read/handled state is current without waiting a cycle.
+  // Sweep-on-open (William 2026-07-29): board reflects what he just did in Gmail.
   useEffect(() => {
     let alive = true
     load().then(async () => {
@@ -113,12 +138,25 @@ export default function TaskBoard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const flash = (msg) => { setBanner(msg); setTimeout(() => setBanner(null), 7000) }
+  const flash = (msg) => { setBanner(msg); setTimeout(() => setBanner(null), 9000) }
 
   const sweepNow = async () => {
     setSweeping(true)
     try { await apiFetch(`${API_URL}/tasks/sweep`, { method: 'POST' }); await load() }
     catch (e) { alert(`Sweep failed: ${e}`) } finally { setSweeping(false) }
+  }
+
+  const robotSettle = async () => {
+    setSettling(true)
+    try {
+      const res = await apiFetch(`${API_URL}/auto-settle/run`, { method: 'POST' })
+      const d = await res.json()
+      const done = d.settled || []
+      flash(done.length === 0
+        ? 'Robot settle: nothing it could safely close.'
+        : `Robot settled ${done.length}: ${done.map(s => `${s.title || s.task_key} (${s.reason})`).join(' · ')}`)
+      await load()
+    } catch (e) { alert(`Robot settle failed: ${e}`) } finally { setSettling(false) }
   }
 
   const saveNote = async (taskKey, note) => {
@@ -234,147 +272,196 @@ export default function TaskBoard() {
     if (d.status === 'ok') setPlaudView(d)
   }
 
-  if (loading && !data) return <div className="empty">Loading the board...</div>
-  if (error) return <div className="empty">Board failed: {error} <button className="btn btn-sm" onClick={load}>Retry</button></div>
+  // ---- THE COMPOSER ----
+  const writePreview = async (t) => {
+    const intent = (intents[t.task_key] || '').trim()
+    if (!intent || !t.gmail_id) return
+    setComposeBusy(t.task_key)
+    try {
+      const res = await apiFetch(`${API_URL}/reply/compose`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message_id: t.gmail_id, intent, order_id: t.order_id || null }),
+      })
+      const d = await res.json()
+      if (d.status !== 'ok') throw new Error(d.message || `HTTP ${res.status}`)
+      setChainOpen(false)
+      setPreview({ task: t, ...d })
+    } catch (e) { alert(`Compose failed: ${e}`) } finally { setComposeBusy(null) }
+  }
 
-  const renderRows = (items) => (
-    <tbody>
-      {items.map(t => (
-        <tr key={t.task_key}>
-          <td style={{ maxWidth: '300px' }}>
+  const sendPreview = async () => {
+    if (!preview || !(preview.draft_body || '').trim()) return
+    setSendBusy(true)
+    try {
+      const res = await apiFetch(`${API_URL}/reply/send`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message_id: preview.message_id,
+          body: preview.draft_body,
+          subject: preview.subject || '',
+        }),
+      })
+      const d = await res.json()
+      if (d.status !== 'ok') throw new Error(d.message || 'send failed')
+      flash(d.redirected
+        ? `Sent — SAFETY REDIRECT: landed in your inbox, not ${d.original_to} (allowlist closed)`
+        : `Sent to ${d.to} ✓`)
+      setIntents(x => { const n = { ...x }; delete n[preview.task.task_key]; return n })
+      setPreview(null)
+      await load()
+    } catch (e) { alert(`Send failed: ${e}`) } finally { setSendBusy(false) }
+  }
+
+  if (loading && !data) return <div className="empty">Loading the queue...</div>
+  if (error) return <div className="empty">Queue failed: {error} <button className="btn btn-sm" onClick={load}>Retry</button></div>
+
+  // THE QUEUE: everything actionable, one list, OLDEST FIRST.
+  const queue = [...(data?.order_tasks || []), ...(data?.other_tasks || [])]
+    .sort((a, b) => {
+      const da = new Date(a.date_str || 0).getTime() || 0
+      const db = new Date(b.date_str || 0).getTime() || 0
+      return da - db
+    })
+
+  const renderCard = (t) => {
+    const [badge, color] = TYPE_BADGES[t.type] || [t.type.toUpperCase(), '#6B7280']
+    const days = ageDays(t.date_str)
+    const isEmail = !!t.gmail_id && t.type.startsWith('unread')
+    const canMark = t.order_id && t.type !== 'manual' && t.type !== 'follow-up'
+    return (
+      <div key={t.task_key} style={{
+        border: '1px solid var(--border, #ddd)', borderRadius: '8px',
+        padding: '10px 14px', marginBottom: '10px',
+        borderLeft: `4px solid ${color}`,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '10px', fontWeight: 800, color, letterSpacing: '0.5px' }}>{badge}</span>
+          {t.order_id && <span className="order-id">#{t.order_id}</span>}
+          <span style={{ fontWeight: 600, fontSize: '14px' }}>
             {t.type === 'plaud'
               ? <a href="#" onClick={e => { e.preventDefault(); openPlaud(t.task_key) }}>{t.title}</a>
               : t.title}
-          </td>
-          <td style={{ maxWidth: '240px' }}>{t.detail || '—'}{t.due_date ? ` · due ${t.due_date}` : ''}</td>
-          <td>{t.order_id ? <span className="order-id">#{t.order_id}</span> : '—'}</td>
-          <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(t.date_str)}</td>
-          <td>
-            <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center' }}>
-              {(t.type === 'manual' || t.type === 'follow-up') ? (
-                <>
-                  <button className="btn btn-sm" disabled={busyKey === t.task_key}
-                    style={{ background: 'rgba(5,150,105,0.12)', color: '#059669', fontWeight: 700 }}
-                    onClick={() => markDone(t.task_key)}>Done</button>
-                  <input type="date" defaultValue={t.due_date || ''} title="change follow-up date"
-                    onChange={e => changeDue(t.task_key, e.target.value)} style={{ padding: '3px' }} />
-                </>
-              ) : (
-                <>
-                  <input type="text" value={drafts[t.task_key] ?? ''} placeholder="note (never triggers anything)"
-                    onChange={e => setDrafts(x => ({ ...x, [t.task_key]: e.target.value }))}
-                    onKeyDown={e => { if (e.key === 'Enter' && (drafts[t.task_key] || '').trim()) saveNote(t.task_key, drafts[t.task_key].trim()) }}
-                    style={{ flex: 1, minWidth: '130px', padding: '4px 8px' }} />
-                  <button className="btn btn-sm" disabled={busyKey === t.task_key || !(drafts[t.task_key] || '').trim()}
-                    onClick={() => saveNote(t.task_key, drafts[t.task_key].trim())}>Save</button>
-                </>
-              )}
-              {t.order_id && t.type !== 'manual' && t.type !== 'follow-up' && (
-                <>
-                  <select value={picks[t.task_key] || ''}
-                    onChange={e => setPicks(x => ({ ...x, [t.task_key]: e.target.value }))}
-                    style={{ padding: '4px' }}>
-                    {ACTION_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                  </select>
-                  <button className="btn btn-sm" disabled={busyKey === t.task_key || !picks[t.task_key]}
-                    onClick={() => fireAction(t.task_key)}>Apply</button>
-                  <button className="btn btn-sm" title="add a follow-up task on this order"
-                    onClick={() => setFuOpen(o => (o === t.order_id ? null : t.order_id))}>+ Follow-up</button>
-                </>
-              )}
-              {t.gmail_id && t.type.startsWith('unread') && (
-                <>
-                  <button className="btn btn-sm" disabled={busyKey === t.task_key}
-                    onClick={() => emailAction(t.task_key, 'read')}>Read</button>
-                  <button className="btn btn-sm" disabled={busyKey === t.task_key}
-                    onClick={() => emailAction(t.task_key, 'archive')}>Archive</button>
-                  <button className="btn btn-sm" disabled={busyKey === t.task_key}
-                    style={confirmDelete === t.task_key ? { background: '#DC2626', color: '#fff', fontWeight: 700 } : { color: '#DC2626' }}
-                    onClick={() => emailAction(t.task_key, 'trash')}>
-                    {confirmDelete === t.task_key ? 'Sure? DELETE!' : 'Delete'}
-                  </button>
-                </>
-              )}
-            </div>
-            {fuOpen && t.order_id === fuOpen && t.type !== 'manual' && t.type !== 'follow-up' && (
-              <div style={{ display: 'flex', gap: '5px', marginTop: '6px', flexWrap: 'wrap' }}>
-                <input type="text" value={fuText[t.order_id] ?? ''} placeholder={`follow-up on #${t.order_id} — e.g. call them`}
-                  onChange={e => setFuText(x => ({ ...x, [t.order_id]: e.target.value }))}
-                  onKeyDown={e => { if (e.key === 'Enter') addFollowUp(t.order_id) }}
-                  style={{ flex: 1, minWidth: '180px', padding: '4px 8px' }} />
-                <input type="date" value={fuDue[t.order_id] ?? ''} onChange={e => setFuDue(x => ({ ...x, [t.order_id]: e.target.value }))}
-                  style={{ padding: '3px' }} title="defaults to tomorrow" />
-                <button className="btn btn-sm" onClick={() => addFollowUp(t.order_id)}
-                  disabled={!(fuText[t.order_id] || '').trim()}>Add</button>
-              </div>
-            )}
-          </td>
-        </tr>
-      ))}
-    </tbody>
-  )
+          </span>
+          <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap', fontSize: '12px', color: days >= 2 ? '#DC2626' : 'var(--muted, #888)', fontWeight: days >= 2 ? 700 : 400 }}>
+            {fmtDate(t.date_str)} · waiting {ageLabel(t.date_str)}
+          </span>
+        </div>
+        {(t.detail || t.due_date) && (
+          <div style={{ fontSize: '13px', color: 'var(--muted, #666)', margin: '4px 0 0' }}>
+            {t.detail || ''}{t.due_date ? ` · due ${t.due_date}` : ''}
+          </div>
+        )}
 
-  const renderBoard = (items) => {
-    const groups = TYPE_LABELS.map(([k, label]) => [k, label, items.filter(t => t.type === k)])
-      .filter(([, , v]) => v.length > 0)
-    if (groups.length === 0) return <div className="empty">Nothing here right now.</div>
-    return groups.map(([k, label, v]) => (
-      <div key={k} style={{ marginBottom: '18px' }}>
-        <h4 style={{ margin: '0 0 6px', fontSize: '13px' }}>{label} ({v.length})</h4>
-        <table className="orders-table">
-          <thead><tr><th>Task</th><th>Detail</th><th>Order</th><th>Date</th>
-            <th style={{ width: '38%' }}>Your note / actions</th></tr></thead>
-          {renderRows(v)}
-        </table>
+        <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '8px' }}>
+          {(t.type === 'manual' || t.type === 'follow-up') ? (
+            <>
+              <button className="btn btn-sm" disabled={busyKey === t.task_key}
+                style={{ background: 'rgba(5,150,105,0.12)', color: '#059669', fontWeight: 700 }}
+                onClick={() => markDone(t.task_key)}>Done</button>
+              <input type="date" defaultValue={t.due_date || ''} title="change follow-up date"
+                onChange={e => changeDue(t.task_key, e.target.value)} style={{ padding: '3px' }} />
+            </>
+          ) : (
+            <>
+              <input type="text" value={drafts[t.task_key] ?? ''} placeholder="note (never triggers anything)"
+                onChange={e => setDrafts(x => ({ ...x, [t.task_key]: e.target.value }))}
+                onKeyDown={e => { if (e.key === 'Enter' && (drafts[t.task_key] || '').trim()) saveNote(t.task_key, drafts[t.task_key].trim()) }}
+                style={{ flex: 1, minWidth: '120px', padding: '4px 8px' }} />
+              <button className="btn btn-sm" disabled={busyKey === t.task_key || !(drafts[t.task_key] || '').trim()}
+                onClick={() => saveNote(t.task_key, drafts[t.task_key].trim())}>Save</button>
+            </>
+          )}
+          {canMark && (
+            <>
+              <select value={picks[t.task_key] || ''}
+                onChange={e => setPicks(x => ({ ...x, [t.task_key]: e.target.value }))}
+                style={{ padding: '4px' }}>
+                {ACTION_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+              <button className="btn btn-sm" disabled={busyKey === t.task_key || !picks[t.task_key]}
+                onClick={() => fireAction(t.task_key)}>Apply</button>
+              <button className="btn btn-sm" title="add a follow-up task on this order"
+                onClick={() => setFuOpen(o => (o === t.order_id ? null : t.order_id))}>+ Follow-up</button>
+            </>
+          )}
+          {isEmail && (
+            <>
+              <button className="btn btn-sm" disabled={busyKey === t.task_key}
+                onClick={() => emailAction(t.task_key, 'read')}>Read</button>
+              <button className="btn btn-sm" disabled={busyKey === t.task_key}
+                onClick={() => emailAction(t.task_key, 'archive')}>Archive</button>
+              <button className="btn btn-sm" disabled={busyKey === t.task_key}
+                style={confirmDelete === t.task_key ? { background: '#DC2626', color: '#fff', fontWeight: 700 } : { color: '#DC2626' }}
+                onClick={() => emailAction(t.task_key, 'trash')}>
+                {confirmDelete === t.task_key ? 'Sure? DELETE!' : 'Delete'}
+              </button>
+            </>
+          )}
+        </div>
+
+        {isEmail && (
+          <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '6px' }}>
+            <input type="text" value={intents[t.task_key] ?? ''}
+              placeholder='tell the robot what to say — e.g. "the quote is approved, ship it UPS"'
+              onChange={e => setIntents(x => ({ ...x, [t.task_key]: e.target.value }))}
+              onKeyDown={e => { if (e.key === 'Enter' && (intents[t.task_key] || '').trim()) writePreview(t) }}
+              style={{ flex: 1, minWidth: '220px', padding: '5px 8px' }} />
+            <button className="btn btn-sm" disabled={composeBusy === t.task_key || !(intents[t.task_key] || '').trim()}
+              style={{ background: 'rgba(29,78,216,0.12)', color: '#1D4ED8', fontWeight: 700 }}
+              onClick={() => writePreview(t)}>
+              {composeBusy === t.task_key ? 'Writing…' : '✍ Write & Preview'}
+            </button>
+          </div>
+        )}
+
+        {fuOpen && t.order_id === fuOpen && canMark && (
+          <div style={{ display: 'flex', gap: '5px', marginTop: '6px', flexWrap: 'wrap' }}>
+            <input type="text" value={fuText[t.order_id] ?? ''} placeholder={`follow-up on #${t.order_id} — e.g. call them`}
+              onChange={e => setFuText(x => ({ ...x, [t.order_id]: e.target.value }))}
+              onKeyDown={e => { if (e.key === 'Enter') addFollowUp(t.order_id) }}
+              style={{ flex: 1, minWidth: '180px', padding: '4px 8px' }} />
+            <input type="date" value={fuDue[t.order_id] ?? ''} onChange={e => setFuDue(x => ({ ...x, [t.order_id]: e.target.value }))}
+              style={{ padding: '3px' }} title="defaults to tomorrow" />
+            <button className="btn btn-sm" onClick={() => addFollowUp(t.order_id)}
+              disabled={!(fuText[t.order_id] || '').trim()}>Add</button>
+          </div>
+        )}
       </div>
-    ))
+    )
   }
-
-  const orderTasks = data?.order_tasks || []
-  const otherTasks = data?.other_tasks || []
 
   return (
     <div style={{ padding: '16px 0' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+      {/* MONEY STRIP — one line, always on top (William: "keep that one line") */}
+      {strip && (
+        <div style={{ fontSize: '14px', fontWeight: 600, padding: '8px 14px', marginBottom: '12px',
+          border: '1px solid var(--border, #ddd)', borderRadius: '8px', background: 'rgba(5,150,105,0.06)' }}>
+          💰 Landed today ${Number(strip.landed_24h || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} ({strip.landed_count || 0})
+          {' · '}Awaiting ${Number(strip.awaiting_total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} across {strip.awaiting_count || 0} orders
+          {' · '}90-day freight net ${Number(strip.freight_net_90d || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0, fontSize: '18px' }}>THE QUEUE — {queue.length} waiting, oldest first</h2>
         <button className="btn btn-sm" onClick={sweepNow} disabled={sweeping}>{sweeping ? 'Sweeping…' : 'Sweep now'}</button>
+        <button className="btn btn-sm" onClick={robotSettle} disabled={settling}
+          title="the robot closes what it can prove is already handled — and tells you why">
+          {settling ? 'Settling…' : '🤖 Robot settle'}</button>
         <span style={{ color: 'var(--muted, #888)', fontSize: '12px' }}>last sweep {fmtDate(data?.last_sweep)}</span>
       </div>
+
       {banner && (
         <div style={{ background: 'rgba(5,150,105,0.12)', border: '1px solid #059669', color: '#059669', borderRadius: '6px', padding: '8px 12px', marginBottom: '12px', fontWeight: 600 }}>
           {banner}
         </div>
       )}
 
-      {rundown && (
-        <div style={{ border: '1px solid var(--border, #ddd)', borderRadius: '8px', padding: '14px 16px', marginBottom: '18px', background: 'rgba(29,78,216,0.04)' }}>
-          <h2 style={{ margin: '0 0 10px', fontSize: '17px' }}>☀️ RUNDOWN</h2>
-          {[
-            ['💰 Payments landed (24h)', (rundown.payments_last24h || []).map(p => `#${p.order_id} — ${p.customer || ''}`)],
-            ['🚨 Needs you', (rundown.needs_you || []).map(t => t.title)],
-            ['✉️ Drafts waiting', (rundown.drafts_waiting || []).map(t => t.title)],
-            ['🏭 Supplier actions', (rundown.supplier_actions || []).map(t => t.title)],
-            ['📅 Due today', (rundown.due_today || []).map(t => t.title + (t.order_id ? ` (#${t.order_id})` : ''))],
-            ['🚚 Deliveries & claims (24h)', (rundown.deliveries_and_claims_last24h || []).map(d => `#${d.order_id}`)],
-            ['⏳ Awaiting payment', (rundown.awaiting_payment || []).map(o => `#${o.order_id} — ${o.customer} $${Number(o.total).toLocaleString()} (${o.days_open}d)`)],
-          ].map(([label, items]) => (
-            <div key={label} style={{ marginBottom: '6px', fontSize: '13px' }}>
-              <strong>{label}:</strong>{' '}
-              {items.length === 0
-                ? <span style={{ color: 'var(--muted, #888)' }}>none</span>
-                : items.slice(0, 8).map((s, i) => (
-                    <span key={i} style={{ marginRight: '10px' }}>{s}{i < Math.min(items.length, 8) - 1 ? ' ·' : ''}</span>
-                  ))}
-              {items.length > 8 && <span style={{ color: 'var(--muted, #888)' }}> +{items.length - 8} more</span>}
-            </div>
-          ))}
-        </div>
-      )}
+      {queue.length === 0
+        ? <div className="empty">Queue is empty. Nothing is waiting on you.</div>
+        : queue.map(renderCard)}
 
-      <h2 style={{ margin: '4px 0 10px', fontSize: '18px' }}>ORDER TASKS — {orderTasks.length}</h2>
-      {renderBoard(orderTasks)}
-
-      <h2 style={{ margin: '26px 0 10px', fontSize: '18px' }}>OTHER TASKS — {otherTasks.length}</h2>
-      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '12px' }}>
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center', margin: '20px 0 12px' }}>
         <input type="text" value={newTask} placeholder="Add a task — e.g. Called Eddie, he said ship Tuesday"
           onChange={e => setNewTask(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') addManual() }}
@@ -392,24 +479,29 @@ export default function TaskBoard() {
           <button className="btn btn-sm" onClick={addPlaud} disabled={!plaudText.trim()} style={{ marginTop: '6px' }}>Save summary</button>
         </div>
       )}
-      {renderBoard(otherTasks)}
 
       {(data?.handled || []).length > 0 && (
         <div style={{ marginTop: '26px' }}>
-          <h3 style={{ margin: '0 0 6px', fontSize: '14px' }}>HANDLED — your notes ({data.handled.length})</h3>
+          <h3 style={{ margin: '0 0 6px', fontSize: '14px' }}>HANDLED ({data.handled.length})</h3>
           <table className="orders-table">
-            <thead><tr><th>Task</th><th>Order</th><th>Your note</th><th>Noted</th><th></th></tr></thead>
+            <thead><tr><th>Task</th><th>Order</th><th>How it settled</th><th>When</th><th></th></tr></thead>
             <tbody>
-              {data.handled.map(t => (
-                <tr key={t.task_key} style={{ opacity: 0.75 }}>
-                  <td style={{ maxWidth: '320px' }}>{t.title}</td>
-                  <td>{t.order_id ? <span className="order-id">#{t.order_id}</span> : '—'}</td>
-                  <td style={{ maxWidth: '320px' }}>{t.note}</td>
-                  <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(t.note_at)}</td>
-                  <td><button className="btn btn-sm" disabled={busyKey === t.task_key}
-                    onClick={() => saveNote(t.task_key, '')}>Reopen</button></td>
-                </tr>
-              ))}
+              {data.handled.map(t => {
+                const robo = (t.note || '').includes('[robot settled:')
+                return (
+                  <tr key={t.task_key} style={{ opacity: 0.8 }}>
+                    <td style={{ maxWidth: '320px' }}>{t.title}</td>
+                    <td>{t.order_id ? <span className="order-id">#{t.order_id}</span> : '—'}</td>
+                    <td style={{ maxWidth: '320px' }}>
+                      {robo && <span style={{ fontSize: '10px', fontWeight: 800, color: '#0E7490', marginRight: '6px' }}>🤖 ROBOT</span>}
+                      {t.note}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(t.note_at)}</td>
+                    <td><button className="btn btn-sm" disabled={busyKey === t.task_key}
+                      onClick={() => saveNote(t.task_key, '')}>Reopen</button></td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -458,6 +550,50 @@ export default function TaskBoard() {
           </table>
         )}
       </div>
+
+      {/* THE PREVIEW POPUP — chain + editable draft + SEND */}
+      {preview && (
+        <div onClick={() => !sendBusy && setPreview(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--card, #fff)', borderRadius: '10px', padding: '20px', maxWidth: '760px', width: '92%', maxHeight: '86vh', overflow: 'auto' }}>
+            <h3 style={{ margin: '0 0 4px' }}>✍ Preview before it fires</h3>
+            <div style={{ fontSize: '13px', color: 'var(--muted, #666)', marginBottom: '10px' }}>
+              To <strong>{preview.to}</strong> · {preview.subject}
+              {preview.order_id && <> · order <span className="order-id">#{preview.order_id}</span></>}
+              {preview.supplier && <> · {preview.supplier}</>}
+            </div>
+
+            <button className="btn btn-sm" onClick={() => setChainOpen(o => !o)} style={{ marginBottom: '8px' }}>
+              {chainOpen ? 'Hide the chain' : `Show the chain (${(preview.chain || []).length} emails)`}
+            </button>
+            {chainOpen && (
+              <div style={{ border: '1px solid var(--border, #ddd)', borderRadius: '6px', padding: '10px', marginBottom: '10px', maxHeight: '220px', overflow: 'auto' }}>
+                {(preview.chain || []).map((c, i) => (
+                  <div key={i} style={{ marginBottom: '8px', fontSize: '12px' }}>
+                    <div style={{ fontWeight: 700 }}>{c.from} <span style={{ color: 'var(--muted, #888)', fontWeight: 400 }}>· {c.date}</span></div>
+                    <div style={{ color: 'var(--muted, #666)', whiteSpace: 'pre-wrap' }}>{c.snippet}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <textarea value={preview.draft_body}
+              onChange={e => setPreview(p => ({ ...p, draft_body: e.target.value }))}
+              rows={14} style={{ width: '100%', padding: '10px', fontSize: '14px', fontFamily: 'inherit', lineHeight: 1.5 }} />
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '10px', alignItems: 'center' }}>
+              <button className="btn btn-sm" disabled={sendBusy || !(preview.draft_body || '').trim()}
+                style={{ background: '#059669', color: '#fff', fontWeight: 800, padding: '8px 18px', fontSize: '14px' }}
+                onClick={sendPreview}>{sendBusy ? 'Sending…' : '🔥 SEND'}</button>
+              <button className="btn btn-sm" disabled={sendBusy} onClick={() => setPreview(null)}>Cancel</button>
+              <span style={{ fontSize: '12px', color: 'var(--muted, #888)' }}>
+                edits here go out exactly as written · it replies inside the real thread
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {plaudView && (
         <div onClick={() => setPlaudView(null)}
