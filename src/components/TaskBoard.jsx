@@ -8,16 +8,14 @@
  *
  * v3.1-3.3 (7/30): done-events noise fix · redirect confessions ·
  * NEEDS REPLY cards (read is not replied) · reply-anchor notice.
- * v3.4 (7/31): EMAIL SUMMARY (last two messages verbatim) on every order
- * card; Full Analysis popup; intent box anchored to the latest exchange.
- * v3.5 (7/31): full Mark-order dropdown + CANCEL; send-to override
- * survives the send; override note in the preview.
- * v3.6 (7/31): cards collapse to one line; CANCEL notify-or-quiet modal;
- * Smarty-style send-to picker (datalist from /reply/contacts).
- * v3.7 (7/31): THREE IDENTIFIERS on the collapsed line — customer · door
- * prefix · warehouse (from the exchanges batch facts); ✔ HANDLED button —
- * the loop is closed, and a NEW email on the thread brings the
- * conversation back as a NEEDS REPLY card (the comeback law).
+ * v3.4 (7/31): EMAIL SUMMARY on every order card; Full Analysis popup;
+ * intent box anchored to the latest exchange.
+ * v3.5 (7/31): full Mark-order dropdown + CANCEL; send-to override.
+ * v3.6 (7/31): collapse; CANCEL notify-or-quiet modal; send-to picker.
+ * v3.7 (7/31): three identifiers on the collapsed line; ✔ HANDLED button.
+ * v3.8 (7/31): NEEDS REPLY cards get the FULL KIT — ✔ HANDLED + Read /
+ * Archive / Delete via the thread-action door ("I need delete to parse
+ * out the spam newsletters and the like").
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -203,11 +201,30 @@ export default function TaskBoard() {
     try {
       await apiFetch(`${API_URL}/queue/awaiting-reply/dismiss`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ thread_id: t.thread_id, order_id: t.order_id || null, note: 'no reply needed' }),
+        body: JSON.stringify({ thread_id: t.thread_id, order_id: t.order_id || null, note: 'HANDLED' }),
       })
-      flash('Marked: no reply needed (a new email on the thread brings it back)')
+      flash('Moved to HANDLED — a new email on this thread brings it back as NEEDS REPLY')
       await load()
     } catch (e) { alert(`Dismiss failed: ${e}`) } finally { setBusyKey(null) }
+  }
+
+  const threadAction = async (t, action) => {
+    if (action === 'trash' && confirmDelete !== t.task_key) {
+      setConfirmDelete(t.task_key)
+      setTimeout(() => setConfirmDelete(k => (k === t.task_key ? null : k)), 6000)
+      return
+    }
+    setConfirmDelete(null); setBusyKey(t.task_key)
+    try {
+      const res = await apiFetch(`${API_URL}/queue/thread-action`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thread_id: t.thread_id, action, order_id: t.order_id || null }),
+      })
+      const d = await res.json()
+      if (d.status !== 'ok') throw new Error(d.message || 'failed')
+      flash(action === 'trash' ? 'Moved to Gmail Trash (recoverable 30 days)' : `Marked ${action}`)
+      await load()
+    } catch (e) { alert(`${action} failed: ${e}`) } finally { setBusyKey(null) }
   }
 
   const loadArchive = async () => {
@@ -534,9 +551,21 @@ export default function TaskBoard() {
 
         <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '8px' }}>
           {isNeedsReply ? (
-            <button className="btn btn-sm" disabled={busyKey === t.task_key}
-              title="a new email on this thread brings the card back"
-              onClick={() => dismissAwaiting(t)}>No reply needed</button>
+            <>
+              <button className="btn btn-sm" disabled={busyKey === t.task_key}
+                title="the loop is closed — a new email on this thread brings it back as NEEDS REPLY"
+                style={{ background: 'rgba(5,150,105,0.12)', color: '#059669', fontWeight: 700 }}
+                onClick={() => dismissAwaiting(t)}>✔ HANDLED</button>
+              <button className="btn btn-sm" disabled={busyKey === t.task_key}
+                onClick={() => threadAction(t, 'read')}>Read</button>
+              <button className="btn btn-sm" disabled={busyKey === t.task_key}
+                onClick={() => threadAction(t, 'archive')}>Archive</button>
+              <button className="btn btn-sm" disabled={busyKey === t.task_key}
+                style={confirmDelete === t.task_key ? { background: '#DC2626', color: '#fff', fontWeight: 700 } : { color: '#DC2626' }}
+                onClick={() => threadAction(t, 'trash')}>
+                {confirmDelete === t.task_key ? 'Sure? DELETE!' : 'Delete'}
+              </button>
+            </>
           ) : (t.type === 'manual' || t.type === 'follow-up') ? (
             <>
               <button className="btn btn-sm" disabled={busyKey === t.task_key}
