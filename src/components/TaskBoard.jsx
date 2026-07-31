@@ -12,11 +12,12 @@
  * card; Full Analysis popup; intent box anchored to the latest exchange.
  * v3.5 (7/31): full Mark-order dropdown + CANCEL; send-to override
  * survives the send; override note in the preview.
- * v3.6 (7/31, William's notes): CARDS COLLAPSE to one line unless clicked
- * open ("when everything is showing that is a very long page"); CANCEL
- * asks notify-or-quiet ("we need to have a choose, notify or not notify
- * the cust"); Smarty-style SEND-TO PICKER — type a few letters, the list
- * shrinks (datalist fed by GET /reply/contacts).
+ * v3.6 (7/31): cards collapse to one line; CANCEL notify-or-quiet modal;
+ * Smarty-style send-to picker (datalist from /reply/contacts).
+ * v3.7 (7/31): THREE IDENTIFIERS on the collapsed line — customer · door
+ * prefix · warehouse (from the exchanges batch facts); ✔ HANDLED button —
+ * the loop is closed, and a NEW email on the thread brings the
+ * conversation back as a NEEDS REPLY card (the comeback law).
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -101,7 +102,7 @@ export default function TaskBoard() {
   const [settling, setSettling] = useState(false)
   const [doneEvents, setDoneEvents] = useState(null)   // noise-filtered feed
   const [awaiting, setAwaiting] = useState([])         // read-is-not-replied cards
-  const [exchanges, setExchanges] = useState({})       // order_id -> last exchange
+  const [exchanges, setExchanges] = useState({})       // order_id -> last exchange + facts
   const [analysisView, setAnalysisView] = useState(null) // {order_id, loading, text}
   const requestedEx = useRef(new Set())
   const [expanded, setExpanded] = useState(() => new Set()) // collapsed unless ticked (7/31)
@@ -147,8 +148,8 @@ export default function TaskBoard() {
     } catch { /* picker just stays empty */ }
   }, [])
 
-  // EMAIL SUMMARY on every order card (William 7/31: "always the last two
-  // messages until archived") — batch-fetched once per order, cached server-side
+  // EMAIL SUMMARY + FACTS on every order card (William 7/31) — batch-fetched
+  // once per order, cached server-side
   useEffect(() => {
     const ids = [...new Set(
       [...(data?.order_tasks || []), ...(data?.other_tasks || [])]
@@ -181,6 +182,20 @@ export default function TaskBoard() {
     } catch (e) {
       setAnalysisView({ order_id: oid, loading: false, text: `Analysis failed: ${e}` })
     }
+  }
+
+  const markHandled = async (t) => {
+    setBusyKey(t.task_key)
+    try {
+      const res = await apiFetch(`${API_URL}/queue/handled`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_key: t.task_key, thread_id: t.thread_id || '', order_id: t.order_id || null }),
+      })
+      const d = await res.json()
+      if (d.status !== 'ok') throw new Error(d.message || 'failed')
+      flash('Moved to HANDLED — a new email on this thread brings it back as NEEDS REPLY')
+      await load()
+    } catch (e) { alert(`Handled failed: ${e}`) } finally { setBusyKey(null) }
   }
 
   const dismissAwaiting = async (t) => {
@@ -474,6 +489,16 @@ export default function TaskBoard() {
               ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); openPlaud(t.task_key) }}>{t.title}</a>
               : t.title}
           </span>
+          {/* the three identifiers on the collapsed line (William 7/31):
+              customer · door prefix · warehouse */}
+          {ex && ex.facts && (
+            <span style={{ fontSize: '12px', color: '#7C3AED', fontWeight: 600 }}>
+              {[ex.facts.customer,
+                (ex.facts.prefixes || []).join('/'),
+                (ex.facts.warehouses || []).join('/')]
+                .filter(Boolean).join(' · ')}
+            </span>
+          )}
           <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap', fontSize: '12px', color: days >= 2 ? '#DC2626' : 'var(--muted, #888)', fontWeight: days >= 2 ? 700 : 400 }}>
             {t.date_str ? `${fmtDate(t.date_str)} · waiting ${ageLabel(t.date_str)}` : 'standing flag'}
           </span>
@@ -528,6 +553,10 @@ export default function TaskBoard() {
                 style={{ flex: 1, minWidth: '120px', padding: '4px 8px' }} />
               <button className="btn btn-sm" disabled={busyKey === t.task_key || !(drafts[t.task_key] || '').trim()}
                 onClick={() => saveNote(t.task_key, drafts[t.task_key].trim())}>Save</button>
+              <button className="btn btn-sm" disabled={busyKey === t.task_key}
+                title="the loop is closed — a new email on this thread brings it back as NEEDS REPLY"
+                style={{ background: 'rgba(5,150,105,0.12)', color: '#059669', fontWeight: 700 }}
+                onClick={() => markHandled(t)}>✔ HANDLED</button>
             </>
           )}
           {canMark && (
