@@ -18,6 +18,11 @@
  * v3.2 (7/30): DONE RECENTLY shows "What really happened" — a redirected
  * send SAYS it landed in the safety inbox (William: "it fired to wpjob1 and
  * it thinks that it fired to lm").
+ * v3.3 (7/30): READ IS NOT REPLIED — NEEDS REPLY cards from the email
+ * ledger (threads where the last outside word has no answer from us,
+ * read/forwarded state irrelevant); "No reply needed" dismiss (a new email
+ * on the thread brings the card back); preview popup states when the reply
+ * was re-anchored to the original outside sender.
  *
  * Everything else that worked stays: notes, Mark order…, follow-ups,
  * Read/Archive/Delete (2-click), add-a-task, Plaud box, archive, done events.
@@ -46,6 +51,7 @@ const TYPE_BADGES = {
   'supplier-action': ['SUPPLIER ACTION', '#B45309'],
   'shipment-watch':  ['SHIPMENT', '#0E7490'],
   'no-reply':        ['NO REPLY 2d+', '#DC2626'],
+  'needs-reply':     ['NEEDS REPLY', '#DC2626'],
   'manual':          ['YOUR TASK', '#374151'],
   'plaud':           ['RECORDER', '#374151'],
   'unread-other':    ['OTHER MAIL', '#6B7280'],
@@ -99,6 +105,7 @@ export default function TaskBoard() {
   const [strip, setStrip] = useState(null)
   const [settling, setSettling] = useState(false)
   const [doneEvents, setDoneEvents] = useState(null)   // noise-filtered feed
+  const [awaiting, setAwaiting] = useState([])         // read-is-not-replied cards
 
   // reply composer
   const [intents, setIntents] = useState({})        // task_key -> intent text
@@ -122,7 +129,23 @@ export default function TaskBoard() {
       const de = await apiFetch(`${API_URL}/queue/done-events?z=${Date.now()}`)
       if (de.ok) setDoneEvents((await de.json()).events || [])
     } catch { /* falls back to the unfiltered feed below */ }
+    try {
+      const ar = await apiFetch(`${API_URL}/queue/awaiting-reply?z=${Date.now()}`)
+      if (ar.ok) setAwaiting((await ar.json()).cards || [])
+    } catch { /* cards just don't show */ }
   }, [])
+
+  const dismissAwaiting = async (t) => {
+    setBusyKey(t.task_key)
+    try {
+      await apiFetch(`${API_URL}/queue/awaiting-reply/dismiss`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thread_id: t.thread_id, order_id: t.order_id || null, note: 'no reply needed' }),
+      })
+      flash('Marked: no reply needed (a new email on the thread brings it back)')
+      await load()
+    } catch (e) { alert(`Dismiss failed: ${e}`) } finally { setBusyKey(null) }
+  }
 
   const loadArchive = async () => {
     if (showArchive) { setShowArchive(false); return }
@@ -317,6 +340,16 @@ export default function TaskBoard() {
       flash(d.redirected
         ? `Sent — SAFETY REDIRECT: landed in your inbox, not ${d.original_to} (allowlist closed)`
         : `Sent to ${d.to} ✓`)
+      // a needs-reply card is answered the moment the reply fires — settle it
+      // now instead of waiting for the ledger to ingest the sent message
+      if (preview.task.type === 'needs-reply' && preview.task.thread_id) {
+        try {
+          await apiFetch(`${API_URL}/queue/awaiting-reply/dismiss`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ thread_id: preview.task.thread_id, order_id: preview.task.order_id || null, note: 'replied via composer' }),
+          })
+        } catch { /* the ledger settles it on the next sync anyway */ }
+      }
       setIntents(x => { const n = { ...x }; delete n[preview.task.task_key]; return n })
       setPreview(null)
       await load()
@@ -327,7 +360,23 @@ export default function TaskBoard() {
   if (error) return <div className="empty">Queue failed: {error} <button className="btn btn-sm" onClick={load}>Retry</button></div>
 
   // THE QUEUE: everything actionable, one list, OLDEST FIRST.
-  const queue = [...(data?.order_tasks || []), ...(data?.other_tasks || [])]
+  // AWAITING-REPLY cards (read is not replied — William's law) merge in as
+  // needs-reply cards, deduped against threads already on the board.
+  const boardTasks = [...(data?.order_tasks || []), ...(data?.other_tasks || [])]
+  const seenThreads = new Set(boardTasks.map(t => t.thread_id).filter(Boolean))
+  const awaitingCards = awaiting
+    .filter(c => !seenThreads.has(c.thread_id))
+    .map(c => ({
+      task_key: `needsreply:${c.thread_id}`,
+      type: 'needs-reply',
+      title: c.subject,
+      detail: `from ${c.from}${c.ever_answered ? '' : ' — never answered'}`,
+      order_id: c.order_id,
+      gmail_id: c.message_id,
+      thread_id: c.thread_id,
+      date_str: c.last_inbound,
+    }))
+  const queue = [...boardTasks, ...awaitingCards]
     .sort((a, b) => {
       const da = new Date(a.date_str || 0).getTime() || 0
       const db = new Date(b.date_str || 0).getTime() || 0
@@ -338,7 +387,9 @@ export default function TaskBoard() {
     const [badge, color] = TYPE_BADGES[t.type] || [t.type.toUpperCase(), '#6B7280']
     const days = ageDays(t.date_str)
     const isEmail = !!t.gmail_id && t.type.startsWith('unread')
-    const canMark = t.order_id && t.type !== 'manual' && t.type !== 'follow-up'
+    const isNeedsReply = t.type === 'needs-reply'
+    const hasComposer = !!t.gmail_id && (isEmail || isNeedsReply)
+    const canMark = t.order_id && t.type !== 'manual' && t.type !== 'follow-up' && !isNeedsReply
     return (
       <div key={t.task_key} style={{
         border: '1px solid var(--border, #ddd)', borderRadius: '8px',
@@ -364,7 +415,11 @@ export default function TaskBoard() {
         )}
 
         <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '8px' }}>
-          {(t.type === 'manual' || t.type === 'follow-up') ? (
+          {isNeedsReply ? (
+            <button className="btn btn-sm" disabled={busyKey === t.task_key}
+              title="a new email on this thread brings the card back"
+              onClick={() => dismissAwaiting(t)}>No reply needed</button>
+          ) : (t.type === 'manual' || t.type === 'follow-up') ? (
             <>
               <button className="btn btn-sm" disabled={busyKey === t.task_key}
                 style={{ background: 'rgba(5,150,105,0.12)', color: '#059669', fontWeight: 700 }}
@@ -410,7 +465,7 @@ export default function TaskBoard() {
           )}
         </div>
 
-        {isEmail && (
+        {hasComposer && (
           <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '6px' }}>
             <input type="text" value={intents[t.task_key] ?? ''}
               placeholder='tell the robot what to say — e.g. "the quote is approved, ship it UPS"'
@@ -586,6 +641,11 @@ export default function TaskBoard() {
               {preview.order_id && <> · order <span className="order-id">#{preview.order_id}</span></>}
               {preview.supplier && <> · {preview.supplier}</>}
             </div>
+            {preview.re_anchored && (
+              <div style={{ fontSize: '12px', color: '#B45309', fontWeight: 700, marginBottom: '8px' }}>
+                ↩ The newest message in this thread is one of OURS (a forward) — replying to the original outside sender instead: {preview.anchor_from}
+              </div>
+            )}
 
             <button className="btn btn-sm" onClick={() => setChainOpen(o => !o)} style={{ marginBottom: '8px' }}>
               {chainOpen ? 'Hide the chain' : `Show the chain (${(preview.chain || []).length} emails)`}
