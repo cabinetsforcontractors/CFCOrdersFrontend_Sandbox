@@ -13,20 +13,18 @@
  *   - ROBOT-SETTLED TRACE: "Robot settle" button runs the auto-settler live
  *     (dry_run=false); anything it closed shows "robot settled this because X".
  *
- * v3.1 (7/30): DONE RECENTLY reads /queue/done-events (b2bwave_sync heartbeat
- * noise excluded server-side); dateless supplier flags say "standing flag".
- * v3.2 (7/30): DONE RECENTLY shows "What really happened" — a redirected
- * send SAYS it landed in the safety inbox.
- * v3.3 (7/30): READ IS NOT REPLIED — NEEDS REPLY cards from the email
- * ledger; "No reply needed" dismiss; re-anchor notice in the preview.
- * v3.4 (7/31, William's queue-card ruling): EMAIL SUMMARY on every order
- * card — the last two messages VERBATIM ("always the last two messages
- * until archived"); Full Analysis button + popup on every order card; the
- * tell-the-robot box anchors to the order's latest exchange, so ANY order
- * card can respond, set a follow-up, or fire an instruction.
+ * v3.1 (7/30): DONE RECENTLY reads /queue/done-events; "standing flag".
+ * v3.2 (7/30): "What really happened" — redirects confessed.
+ * v3.3 (7/30): READ IS NOT REPLIED — NEEDS REPLY cards; re-anchor notice.
+ * v3.4 (7/31): EMAIL SUMMARY (last two messages verbatim) on every order
+ * card; Full Analysis popup; intent box anchored to the latest exchange.
+ * v3.5 (7/31, William's notes): Mark-order dropdown carries ALL options —
+ * six checkpoints + CANCEL (confirm-guarded, lifecycle path); "send to
+ * {name}" in the intent resolves via the contact book, the override shows
+ * in the preview and SURVIVES the send (to: preview.to rides /reply/send).
  *
- * Everything else that worked stays: notes, Mark order…, follow-ups,
- * Read/Archive/Delete (2-click), add-a-task, Plaud box, archive, done events.
+ * Everything else that worked stays: notes, follow-ups, Read/Archive/
+ * Delete (2-click), add-a-task, Plaud box, archive, done events.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -35,9 +33,13 @@ import { apiFetch } from '../api'
 
 const ACTION_OPTIONS = [
   ['', 'Mark order…'],
-  ['payment_link_sent', 'Invoice / payment link sent'],
-  ['payment_received',  'Payment received'],
-  ['is_complete',       'Picked up / delivered / complete'],
+  ['payment_link_sent',   'Invoice / payment link sent'],
+  ['payment_received',    'Payment received'],
+  ['sent_to_warehouse',   'Sent to warehouse'],
+  ['warehouse_confirmed', 'Warehouse confirmed'],
+  ['bol_sent',            'BOL sent'],
+  ['is_complete',         'Picked up / delivered / complete'],
+  ['cancel_order',        '🛑 CANCEL order'],
 ]
 
 const TYPE_BADGES = {
@@ -247,14 +249,18 @@ export default function TaskBoard() {
     } catch (e) { alert(`Note failed: ${e}`) } finally { setBusyKey(null) }
   }
 
-  const fireAction = async (taskKey) => {
+  const fireAction = async (taskKey, orderId) => {
     const action = picks[taskKey]
     if (!action) return
+    if (action === 'cancel_order' &&
+        !window.confirm(`CANCEL order #${orderId || ''} on the website?\n\nThis flips it to Canceled (customer NOT notified). Are you sure?`)) {
+      return
+    }
     setBusyKey(taskKey)
     try {
-      const res = await apiFetch(`${API_URL}/tasks/action`, {
+      const res = await apiFetch(`${API_URL}/queue/order-action`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task_key: taskKey, action }),
+        body: JSON.stringify({ task_key: taskKey, order_id: orderId || null, action }),
       })
       const d = await res.json()
       if (d.status !== 'ok') throw new Error(d.message || 'failed')
@@ -374,6 +380,9 @@ export default function TaskBoard() {
           message_id: preview.message_id,
           body: preview.draft_body,
           subject: preview.subject || '',
+          // the previewed recipient is what fires — send-to overrides and
+          // hand edits to the To survive the send
+          to: preview.to || '',
         }),
       })
       const d = await res.json()
@@ -512,7 +521,7 @@ export default function TaskBoard() {
                 {ACTION_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
               <button className="btn btn-sm" disabled={busyKey === t.task_key || !picks[t.task_key]}
-                onClick={() => fireAction(t.task_key)}>Apply</button>
+                onClick={() => fireAction(t.task_key, t.order_id)}>Apply</button>
               <button className="btn btn-sm" title="add a follow-up task on this order"
                 onClick={() => setFuOpen(o => (o === t.order_id ? null : t.order_id))}>+ Follow-up</button>
             </>
@@ -540,7 +549,7 @@ export default function TaskBoard() {
         {hasComposer && (
           <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '6px' }}>
             <input type="text" value={intents[t.task_key] ?? ''}
-              placeholder='tell the robot what to say — e.g. "the quote is approved, ship it UPS"'
+              placeholder='tell the robot what to say — add "send to {name}" to pick the recipient'
               onChange={e => setIntents(x => ({ ...x, [t.task_key]: e.target.value }))}
               onKeyDown={e => { if (e.key === 'Enter' && (intents[t.task_key] || '').trim()) writePreview(t, anchorId) }}
               style={{ flex: 1, minWidth: '220px', padding: '5px 8px' }} />
@@ -716,6 +725,11 @@ export default function TaskBoard() {
             {preview.re_anchored && (
               <div style={{ fontSize: '12px', color: '#B45309', fontWeight: 700, marginBottom: '8px' }}>
                 ↩ The newest message in this thread is one of OURS (a forward) — replying to the original outside sender instead: {preview.anchor_from}
+              </div>
+            )}
+            {preview.override_note && (
+              <div style={{ fontSize: '12px', color: preview.override_note.startsWith('⚠') ? '#DC2626' : '#1D4ED8', fontWeight: 700, marginBottom: '8px' }}>
+                {preview.override_note}
               </div>
             )}
 
