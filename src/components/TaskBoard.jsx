@@ -2,29 +2,21 @@
  * TaskBoard.jsx — QUEUE BOARD v3 (Phase B, William-approved design 2026-07-30)
  *
  * RULINGS BAKED IN:
- *   - RUNDOWN IS GONE ("this is really useless it can go away").
- *   - MONEY STRIP: one line at the top (landed 24h · awaiting · 90-day freight).
- *   - THE QUEUE: one list, OLDEST FIRST — the thing that's waited longest is
- *     the thing you deal with first. Cards, not grouped tables.
- *   - REPLY COMPOSER on every email card: type a rough intent, hit
- *     "Write & Preview" — popup shows the email chain + the draft (the
- *     William way), you edit if needed, SEND fires it into the real thread.
- *     Preview stays mandatory for now ("as it learns we will turn that off").
- *   - ROBOT-SETTLED TRACE: "Robot settle" button runs the auto-settler live
- *     (dry_run=false); anything it closed shows "robot settled this because X".
+ *   - RUNDOWN IS GONE. MONEY STRIP one line on top. THE QUEUE oldest first.
+ *   - REPLY COMPOSER with mandatory preview ("as it learns we turn it off").
+ *   - ROBOT-SETTLED TRACE.
  *
- * v3.1 (7/30): DONE RECENTLY reads /queue/done-events; "standing flag".
- * v3.2 (7/30): "What really happened" — redirects confessed.
- * v3.3 (7/30): READ IS NOT REPLIED — NEEDS REPLY cards; re-anchor notice.
+ * v3.1-3.3 (7/30): done-events noise fix · redirect confessions ·
+ * NEEDS REPLY cards (read is not replied) · reply-anchor notice.
  * v3.4 (7/31): EMAIL SUMMARY (last two messages verbatim) on every order
  * card; Full Analysis popup; intent box anchored to the latest exchange.
- * v3.5 (7/31, William's notes): Mark-order dropdown carries ALL options —
- * six checkpoints + CANCEL (confirm-guarded, lifecycle path); "send to
- * {name}" in the intent resolves via the contact book, the override shows
- * in the preview and SURVIVES the send (to: preview.to rides /reply/send).
- *
- * Everything else that worked stays: notes, follow-ups, Read/Archive/
- * Delete (2-click), add-a-task, Plaud box, archive, done events.
+ * v3.5 (7/31): full Mark-order dropdown + CANCEL; send-to override
+ * survives the send; override note in the preview.
+ * v3.6 (7/31, William's notes): CARDS COLLAPSE to one line unless clicked
+ * open ("when everything is showing that is a very long page"); CANCEL
+ * asks notify-or-quiet ("we need to have a choose, notify or not notify
+ * the cust"); Smarty-style SEND-TO PICKER — type a few letters, the list
+ * shrinks (datalist fed by GET /reply/contacts).
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -112,6 +104,16 @@ export default function TaskBoard() {
   const [exchanges, setExchanges] = useState({})       // order_id -> last exchange
   const [analysisView, setAnalysisView] = useState(null) // {order_id, loading, text}
   const requestedEx = useRef(new Set())
+  const [expanded, setExpanded] = useState(() => new Set()) // collapsed unless ticked (7/31)
+  const [contacts, setContacts] = useState([])         // the send-to picker list
+  const [sendTos, setSendTos] = useState({})           // task_key -> picked recipient
+  const [cancelModal, setCancelModal] = useState(null) // {task_key, order_id}
+
+  const toggleCard = (key) => setExpanded(s => {
+    const n = new Set(s)
+    if (n.has(key)) n.delete(key); else n.add(key)
+    return n
+  })
 
   // reply composer
   const [intents, setIntents] = useState({})        // task_key -> intent text
@@ -139,6 +141,10 @@ export default function TaskBoard() {
       const ar = await apiFetch(`${API_URL}/queue/awaiting-reply?z=${Date.now()}`)
       if (ar.ok) setAwaiting((await ar.json()).cards || [])
     } catch { /* cards just don't show */ }
+    try {
+      const co = await apiFetch(`${API_URL}/reply/contacts`)
+      if (co.ok) setContacts((await co.json()).contacts || [])
+    } catch { /* picker just stays empty */ }
   }, [])
 
   // EMAIL SUMMARY on every order card (William 7/31: "always the last two
@@ -249,22 +255,25 @@ export default function TaskBoard() {
     } catch (e) { alert(`Note failed: ${e}`) } finally { setBusyKey(null) }
   }
 
-  const fireAction = async (taskKey, orderId) => {
+  const fireAction = async (taskKey, orderId, notify) => {
     const action = picks[taskKey]
     if (!action) return
-    if (action === 'cancel_order' &&
-        !window.confirm(`CANCEL order #${orderId || ''} on the website?\n\nThis flips it to Canceled (customer NOT notified). Are you sure?`)) {
+    // CANCEL gets the notify-or-quiet choice (William 7/31) — the modal
+    // calls back here with notify set
+    if (action === 'cancel_order' && notify === undefined) {
+      setCancelModal({ task_key: taskKey, order_id: orderId })
       return
     }
+    setCancelModal(null)
     setBusyKey(taskKey)
     try {
       const res = await apiFetch(`${API_URL}/queue/order-action`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task_key: taskKey, order_id: orderId || null, action }),
+        body: JSON.stringify({ task_key: taskKey, order_id: orderId || null, action, notify: !!notify }),
       })
       const d = await res.json()
       if (d.status !== 'ok') throw new Error(d.message || 'failed')
-      flash(`Order #${d.order_id}: ${d.label} ✓`)
+      flash(`Order #${d.order_id}: ${d.label}${action === 'cancel_order' ? (notify ? ' — customer NOTIFIED' : ' — quiet, no customer email') : ''} ✓`)
       setPicks(x => { const n = { ...x }; delete n[taskKey]; return n })
       await load()
     } catch (e) { alert(`Action failed: ${e}`) } finally { setBusyKey(null) }
@@ -361,7 +370,8 @@ export default function TaskBoard() {
     try {
       const res = await apiFetch(`${API_URL}/reply/compose`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message_id: mid, intent, order_id: t.order_id || null }),
+        body: JSON.stringify({ message_id: mid, intent, order_id: t.order_id || null,
+          send_to: (sendTos[t.task_key] || '').trim() }),
       })
       const d = await res.json()
       if (d.status !== 'ok') throw new Error(d.message || `HTTP ${res.status}`)
@@ -401,6 +411,7 @@ export default function TaskBoard() {
         } catch { /* the ledger settles it on the next sync anyway */ }
       }
       setIntents(x => { const n = { ...x }; delete n[preview.task.task_key]; return n })
+      setSendTos(x => { const n = { ...x }; delete n[preview.task.task_key]; return n })
       setPreview(null)
       await load()
     } catch (e) { alert(`Send failed: ${e}`) } finally { setSendBusy(false) }
@@ -444,24 +455,30 @@ export default function TaskBoard() {
     const anchorId = t.gmail_id || (ex && ex.anchor_id) || null
     const hasComposer = !!anchorId && t.type !== 'plaud'
     const canMark = t.order_id && t.type !== 'manual' && t.type !== 'follow-up' && !isNeedsReply
+    const isOpen = expanded.has(t.task_key)
     return (
       <div key={t.task_key} style={{
         border: '1px solid var(--border, #ddd)', borderRadius: '8px',
-        padding: '10px 14px', marginBottom: '10px',
+        padding: isOpen ? '10px 14px' : '6px 14px', marginBottom: isOpen ? '10px' : '6px',
         borderLeft: `4px solid ${color}`,
       }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
+        {/* header row — always visible, click to open/close (7/31: "the
+            card needs to collapse unless ticked") */}
+        <div onClick={() => toggleCard(t.task_key)}
+          style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap', cursor: 'pointer' }}>
+          <span style={{ fontSize: '12px', color: 'var(--muted, #888)' }}>{isOpen ? '▾' : '▸'}</span>
           <span style={{ fontSize: '10px', fontWeight: 800, color, letterSpacing: '0.5px' }}>{badge}</span>
           {t.order_id && <span className="order-id">#{t.order_id}</span>}
           <span style={{ fontWeight: 600, fontSize: '14px' }}>
             {t.type === 'plaud'
-              ? <a href="#" onClick={e => { e.preventDefault(); openPlaud(t.task_key) }}>{t.title}</a>
+              ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); openPlaud(t.task_key) }}>{t.title}</a>
               : t.title}
           </span>
           <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap', fontSize: '12px', color: days >= 2 ? '#DC2626' : 'var(--muted, #888)', fontWeight: days >= 2 ? 700 : 400 }}>
             {t.date_str ? `${fmtDate(t.date_str)} · waiting ${ageLabel(t.date_str)}` : 'standing flag'}
           </span>
         </div>
+        {!isOpen ? null : <>
         {(t.detail || t.due_date) && (
           <div style={{ fontSize: '13px', color: 'var(--muted, #666)', margin: '4px 0 0' }}>
             {t.detail || ''}{t.due_date ? ` · due ${t.due_date}` : ''}
@@ -549,10 +566,15 @@ export default function TaskBoard() {
         {hasComposer && (
           <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '6px' }}>
             <input type="text" value={intents[t.task_key] ?? ''}
-              placeholder='tell the robot what to say — add "send to {name}" to pick the recipient'
+              placeholder="tell the robot what to say — it writes it the William way"
               onChange={e => setIntents(x => ({ ...x, [t.task_key]: e.target.value }))}
               onKeyDown={e => { if (e.key === 'Enter' && (intents[t.task_key] || '').trim()) writePreview(t, anchorId) }}
               style={{ flex: 1, minWidth: '220px', padding: '5px 8px' }} />
+            <input type="text" list="cfc-contacts" value={sendTos[t.task_key] ?? ''}
+              placeholder="send to… (type a few letters)"
+              title="optional — leave blank to reply to the thread's sender"
+              onChange={e => setSendTos(x => ({ ...x, [t.task_key]: e.target.value }))}
+              style={{ width: '210px', padding: '5px 8px' }} />
             <button className="btn btn-sm" disabled={composeBusy === t.task_key || !(intents[t.task_key] || '').trim()}
               style={{ background: 'rgba(29,78,216,0.12)', color: '#1D4ED8', fontWeight: 700 }}
               onClick={() => writePreview(t, anchorId)}>
@@ -573,6 +595,7 @@ export default function TaskBoard() {
               disabled={!(fuText[t.order_id] || '').trim()}>Add</button>
           </div>
         )}
+        </>}
       </div>
     )
   }
@@ -601,6 +624,11 @@ export default function TaskBoard() {
           {banner}
         </div>
       )}
+
+      {/* the send-to picker options — native filtering as he types */}
+      <datalist id="cfc-contacts">
+        {contacts.map((c, i) => <option key={i} value={c.email}>{c.label}</option>)}
+      </datalist>
 
       {queue.length === 0
         ? <div className="empty">Queue is empty. Nothing is waiting on you.</div>
@@ -759,6 +787,31 @@ export default function TaskBoard() {
               <span style={{ fontSize: '12px', color: 'var(--muted, #888)' }}>
                 edits here go out exactly as written · it replies inside the real thread
               </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CANCEL CHOICE — notify or quiet (William 7/31) */}
+      {cancelModal && (
+        <div onClick={() => setCancelModal(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 70, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--card, #fff)', borderRadius: '10px', padding: '22px', maxWidth: '440px', width: '92%' }}>
+            <h3 style={{ margin: '0 0 8px' }}>🛑 Cancel order <span className="order-id">#{cancelModal.order_id}</span>?</h3>
+            <p style={{ fontSize: '13px', color: 'var(--muted, #666)', margin: '0 0 14px' }}>
+              The website flips this order to Canceled either way. Pick whether the customer gets the cancellation email.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button className="btn" style={{ borderColor: '#DC2626', color: '#DC2626', fontWeight: 700 }}
+                onClick={() => fireAction(cancelModal.task_key, cancelModal.order_id, false)}>
+                Cancel QUIETLY — no customer email
+              </button>
+              <button className="btn" style={{ borderColor: '#B45309', color: '#B45309', fontWeight: 700 }}
+                onClick={() => fireAction(cancelModal.task_key, cancelModal.order_id, true)}>
+                Cancel + NOTIFY the customer
+              </button>
+              <button className="btn btn-sm" onClick={() => setCancelModal(null)}>Never mind — keep the order</button>
             </div>
           </div>
         </div>
