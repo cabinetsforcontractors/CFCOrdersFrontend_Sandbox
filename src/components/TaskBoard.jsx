@@ -16,19 +16,20 @@
  * v3.1 (7/30): DONE RECENTLY reads /queue/done-events (b2bwave_sync heartbeat
  * noise excluded server-side); dateless supplier flags say "standing flag".
  * v3.2 (7/30): DONE RECENTLY shows "What really happened" — a redirected
- * send SAYS it landed in the safety inbox (William: "it fired to wpjob1 and
- * it thinks that it fired to lm").
+ * send SAYS it landed in the safety inbox.
  * v3.3 (7/30): READ IS NOT REPLIED — NEEDS REPLY cards from the email
- * ledger (threads where the last outside word has no answer from us,
- * read/forwarded state irrelevant); "No reply needed" dismiss (a new email
- * on the thread brings the card back); preview popup states when the reply
- * was re-anchored to the original outside sender.
+ * ledger; "No reply needed" dismiss; re-anchor notice in the preview.
+ * v3.4 (7/31, William's queue-card ruling): EMAIL SUMMARY on every order
+ * card — the last two messages VERBATIM ("always the last two messages
+ * until archived"); Full Analysis button + popup on every order card; the
+ * tell-the-robot box anchors to the order's latest exchange, so ANY order
+ * card can respond, set a follow-up, or fire an instruction.
  *
  * Everything else that worked stays: notes, Mark order…, follow-ups,
  * Read/Archive/Delete (2-click), add-a-task, Plaud box, archive, done events.
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_URL } from '../config'
 import { apiFetch } from '../api'
 
@@ -106,6 +107,9 @@ export default function TaskBoard() {
   const [settling, setSettling] = useState(false)
   const [doneEvents, setDoneEvents] = useState(null)   // noise-filtered feed
   const [awaiting, setAwaiting] = useState([])         // read-is-not-replied cards
+  const [exchanges, setExchanges] = useState({})       // order_id -> last exchange
+  const [analysisView, setAnalysisView] = useState(null) // {order_id, loading, text}
+  const requestedEx = useRef(new Set())
 
   // reply composer
   const [intents, setIntents] = useState({})        // task_key -> intent text
@@ -134,6 +138,42 @@ export default function TaskBoard() {
       if (ar.ok) setAwaiting((await ar.json()).cards || [])
     } catch { /* cards just don't show */ }
   }, [])
+
+  // EMAIL SUMMARY on every order card (William 7/31: "always the last two
+  // messages until archived") — batch-fetched once per order, cached server-side
+  useEffect(() => {
+    const ids = [...new Set(
+      [...(data?.order_tasks || []), ...(data?.other_tasks || [])]
+        .map(t => t.order_id)
+        .concat(awaiting.map(c => c.order_id))
+        .filter(Boolean)
+    )].filter(id => !requestedEx.current.has(id))
+    if (ids.length === 0) return
+    ids.forEach(id => requestedEx.current.add(id))
+    ;(async () => {
+      try {
+        const r = await apiFetch(`${API_URL}/queue/exchanges`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_ids: ids.slice(0, 60) }),
+        })
+        if (r.ok) {
+          const d = await r.json()
+          setExchanges(x => ({ ...x, ...(d.exchanges || {}) }))
+        }
+      } catch { /* summaries just don't show */ }
+    })()
+  }, [data, awaiting])
+
+  const openAnalysis = async (oid) => {
+    setAnalysisView({ order_id: oid, loading: true, text: '' })
+    try {
+      const r = await apiFetch(`${API_URL}/orders/${oid}/comprehensive-summary`, { method: 'POST' })
+      const d = await r.json()
+      setAnalysisView({ order_id: oid, loading: false, text: d.summary || d.message || 'no analysis returned' })
+    } catch (e) {
+      setAnalysisView({ order_id: oid, loading: false, text: `Analysis failed: ${e}` })
+    }
+  }
 
   const dismissAwaiting = async (t) => {
     setBusyKey(t.task_key)
@@ -307,14 +347,15 @@ export default function TaskBoard() {
   }
 
   // ---- THE COMPOSER ----
-  const writePreview = async (t) => {
+  const writePreview = async (t, anchorId) => {
     const intent = (intents[t.task_key] || '').trim()
-    if (!intent || !t.gmail_id) return
+    const mid = anchorId || t.gmail_id
+    if (!intent || !mid) return
     setComposeBusy(t.task_key)
     try {
       const res = await apiFetch(`${API_URL}/reply/compose`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message_id: t.gmail_id, intent, order_id: t.order_id || null }),
+        body: JSON.stringify({ message_id: mid, intent, order_id: t.order_id || null }),
       })
       const d = await res.json()
       if (d.status !== 'ok') throw new Error(d.message || `HTTP ${res.status}`)
@@ -388,7 +429,11 @@ export default function TaskBoard() {
     const days = ageDays(t.date_str)
     const isEmail = !!t.gmail_id && t.type.startsWith('unread')
     const isNeedsReply = t.type === 'needs-reply'
-    const hasComposer = !!t.gmail_id && (isEmail || isNeedsReply)
+    const ex = t.order_id ? exchanges[t.order_id] : null
+    // the composer anchors to the card's own email, else the order's latest
+    // exchange — any card with words to answer gets the intent box
+    const anchorId = t.gmail_id || (ex && ex.anchor_id) || null
+    const hasComposer = !!anchorId && t.type !== 'plaud'
     const canMark = t.order_id && t.type !== 'manual' && t.type !== 'follow-up' && !isNeedsReply
     return (
       <div key={t.task_key} style={{
@@ -413,6 +458,28 @@ export default function TaskBoard() {
             {t.detail || ''}{t.due_date ? ` · due ${t.due_date}` : ''}
           </div>
         )}
+
+        {/* EMAIL SUMMARY — the last two messages, verbatim (William 7/31) */}
+        {ex && ex.has_exchange && (() => {
+          const msgs = []
+          if (ex.you) msgs.push({ label: 'YOU sent', at: ex.you.at, who: ex.you.to, body: ex.you.body, blue: true })
+          if (ex.them) msgs.push({ label: 'THEY replied', at: ex.them.at, who: ex.them.from, body: ex.them.body, blue: false })
+          msgs.sort((a, b) => (a.at || '').localeCompare(b.at || ''))
+          return (
+            <div style={{ marginTop: '8px', borderLeft: '3px solid var(--border, #ddd)', paddingLeft: '10px' }}>
+              {msgs.map((m, i) => (
+                <div key={i} style={{ fontSize: '12px', marginBottom: '6px' }}>
+                  <div style={{ fontWeight: 700, color: m.blue ? '#1D4ED8' : '#B45309' }}>
+                    {m.label} · {(m.at || '').slice(0, 16).replace('T', ' ')} · {(m.who || '').slice(0, 55)}
+                  </div>
+                  <div style={{ color: 'var(--muted, #555)', whiteSpace: 'pre-wrap' }}>
+                    {((m.body || '').slice(0, 400)) || '(empty)'}{(m.body || '').length > 400 ? '…' : ''}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        })()}
 
         <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '8px' }}>
           {isNeedsReply ? (
@@ -450,6 +517,11 @@ export default function TaskBoard() {
                 onClick={() => setFuOpen(o => (o === t.order_id ? null : t.order_id))}>+ Follow-up</button>
             </>
           )}
+          {t.order_id && (
+            <button className="btn btn-sm" title="the full AI rundown of this order"
+              style={{ borderColor: '#DDD6FE', color: '#7C3AED', fontWeight: 700 }}
+              onClick={() => openAnalysis(t.order_id)}>Full Analysis</button>
+          )}
           {isEmail && (
             <>
               <button className="btn btn-sm" disabled={busyKey === t.task_key}
@@ -470,11 +542,11 @@ export default function TaskBoard() {
             <input type="text" value={intents[t.task_key] ?? ''}
               placeholder='tell the robot what to say — e.g. "the quote is approved, ship it UPS"'
               onChange={e => setIntents(x => ({ ...x, [t.task_key]: e.target.value }))}
-              onKeyDown={e => { if (e.key === 'Enter' && (intents[t.task_key] || '').trim()) writePreview(t) }}
+              onKeyDown={e => { if (e.key === 'Enter' && (intents[t.task_key] || '').trim()) writePreview(t, anchorId) }}
               style={{ flex: 1, minWidth: '220px', padding: '5px 8px' }} />
             <button className="btn btn-sm" disabled={composeBusy === t.task_key || !(intents[t.task_key] || '').trim()}
               style={{ background: 'rgba(29,78,216,0.12)', color: '#1D4ED8', fontWeight: 700 }}
-              onClick={() => writePreview(t)}>
+              onClick={() => writePreview(t, anchorId)}>
               {composeBusy === t.task_key ? 'Writing…' : '✍ Write & Preview'}
             </button>
           </div>
@@ -674,6 +746,21 @@ export default function TaskBoard() {
                 edits here go out exactly as written · it replies inside the real thread
               </span>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* FULL ANALYSIS POPUP — the same rundown as the orders screen */}
+      {analysisView && (
+        <div onClick={() => setAnalysisView(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--card, #fff)', borderRadius: '10px', padding: '20px', maxWidth: '780px', width: '92%', maxHeight: '86vh', overflow: 'auto' }}>
+            <h3 style={{ margin: '0 0 10px' }}>Full Analysis — order <span className="order-id">#{analysisView.order_id}</span></h3>
+            {analysisView.loading
+              ? <div className="empty">Reading the whole record… (15-30 seconds)</div>
+              : <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: '13px', lineHeight: 1.6 }}>{analysisView.text}</pre>}
+            <button className="btn btn-sm" onClick={() => setAnalysisView(null)} style={{ marginTop: '8px' }}>Close</button>
           </div>
         </div>
       )}
