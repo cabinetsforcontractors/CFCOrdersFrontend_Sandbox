@@ -16,6 +16,8 @@
  * v3.8 (7/31): NEEDS REPLY cards get the FULL KIT — ✔ HANDLED + Read /
  * Archive / Delete via the thread-action door ("I need delete to parse
  * out the spam newsletters and the like").
+ * v3.9 (8/1): ✔ HANDLED on NEEDS REPLY cards checks the door's answer —
+ * a failed settle alerts instead of flashing a false success banner.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -199,10 +201,12 @@ export default function TaskBoard() {
   const dismissAwaiting = async (t) => {
     setBusyKey(t.task_key)
     try {
-      await apiFetch(`${API_URL}/queue/awaiting-reply/dismiss`, {
+      const res = await apiFetch(`${API_URL}/queue/awaiting-reply/dismiss`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ thread_id: t.thread_id, order_id: t.order_id || null, note: 'HANDLED' }),
       })
+      const d = await res.json()
+      if (d.status !== 'ok') throw new Error(d.message || 'failed')
       flash('Moved to HANDLED — a new email on this thread brings it back as NEEDS REPLY')
       await load()
     } catch (e) { alert(`Dismiss failed: ${e}`) } finally { setBusyKey(null) }
