@@ -1,5 +1,5 @@
 /**
- * TaskBoard.jsx — QUEUE BOARD v3 (Phase B, William-approved design 2026-07-30)
+ * TaskBoard.jsx — QUEUE BOARD v4 (Phase B, William-approved design 2026-07-30)
  *
  * RULINGS BAKED IN:
  *   - RUNDOWN IS GONE. MONEY STRIP one line on top. THE QUEUE oldest first.
@@ -14,10 +14,14 @@
  * v3.6 (7/31): collapse; CANCEL notify-or-quiet modal; send-to picker.
  * v3.7 (7/31): three identifiers on the collapsed line; ✔ HANDLED button.
  * v3.8 (7/31): NEEDS REPLY cards get the FULL KIT — ✔ HANDLED + Read /
- * Archive / Delete via the thread-action door ("I need delete to parse
- * out the spam newsletters and the like").
- * v3.9 (8/1): ✔ HANDLED on NEEDS REPLY cards checks the door's answer —
- * a failed settle alerts instead of flashing a false success banner.
+ * Archive / Delete via the thread-action door.
+ * v3.9 (8/1): ✔ HANDLED checks the door's answer — no false success.
+ * v4.0 (8/1, William's law change): ALL EMAILS EQUAL — every card carries
+ * the last two messages (thread exchange when no order) + Full Analysis
+ * on any card (thread analysis for orderless) + THE DO-BOX: a separate
+ * container where typed commands FIRE REAL MACHINERY (invoice · BOL ·
+ * dispatch) with preview-then-fire and stated overrides. The say-box
+ * stays words-only forever; the DO-box is the muscle.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -102,13 +106,20 @@ export default function TaskBoard() {
   const [settling, setSettling] = useState(false)
   const [doneEvents, setDoneEvents] = useState(null)   // noise-filtered feed
   const [awaiting, setAwaiting] = useState([])         // read-is-not-replied cards
-  const [exchanges, setExchanges] = useState({})       // order_id -> last exchange + facts
-  const [analysisView, setAnalysisView] = useState(null) // {order_id, loading, text}
+  const [exchanges, setExchanges] = useState({})       // order_id / thread:{tid} -> last exchange
+  const [analysisView, setAnalysisView] = useState(null) // {order_id?|thread_id?, loading, text}
   const requestedEx = useRef(new Set())
   const [expanded, setExpanded] = useState(() => new Set()) // collapsed unless ticked (7/31)
   const [contacts, setContacts] = useState([])         // the send-to picker list
   const [sendTos, setSendTos] = useState({})           // task_key -> picked recipient
   const [cancelModal, setCancelModal] = useState(null) // {task_key, order_id}
+
+  // THE DO-BOX (8/1) — typed commands that fire real machinery
+  const [doTexts, setDoTexts] = useState({})
+  const [doBusyKey, setDoBusyKey] = useState(null)
+  const [doPlan, setDoPlan] = useState(null)           // {task, text, ...plan}
+  const [doOverride, setDoOverride] = useState(false)
+  const [doFiring, setDoFiring] = useState(false)
 
   const toggleCard = (key) => setExpanded(s => {
     const n = new Set(s)
@@ -148,8 +159,8 @@ export default function TaskBoard() {
     } catch { /* picker just stays empty */ }
   }, [])
 
-  // EMAIL SUMMARY + FACTS on every order card (William 7/31) — batch-fetched
-  // once per order, cached server-side
+  // EMAIL SUMMARY + FACTS on every card (William 7/31, extended 8/1: ALL
+  // cards carry the last two messages — orderless cards ride thread_ids)
   useEffect(() => {
     const ids = [...new Set(
       [...(data?.order_tasks || []), ...(data?.other_tasks || [])]
@@ -157,13 +168,17 @@ export default function TaskBoard() {
         .concat(awaiting.map(c => c.order_id))
         .filter(Boolean)
     )].filter(id => !requestedEx.current.has(id))
-    if (ids.length === 0) return
+    const tids = [...new Set(
+      awaiting.filter(c => !c.order_id).map(c => c.thread_id).filter(Boolean)
+    )].filter(tid => !requestedEx.current.has('thread:' + tid))
+    if (ids.length === 0 && tids.length === 0) return
     ids.forEach(id => requestedEx.current.add(id))
+    tids.forEach(tid => requestedEx.current.add('thread:' + tid))
     ;(async () => {
       try {
         const r = await apiFetch(`${API_URL}/queue/exchanges`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order_ids: ids.slice(0, 60) }),
+          body: JSON.stringify({ order_ids: ids.slice(0, 60), thread_ids: tids.slice(0, 60) }),
         })
         if (r.ok) {
           const d = await r.json()
@@ -182,6 +197,53 @@ export default function TaskBoard() {
     } catch (e) {
       setAnalysisView({ order_id: oid, loading: false, text: `Analysis failed: ${e}` })
     }
+  }
+
+  // Full Analysis for a thread with no order (8/1: all emails equal)
+  const openThreadAnalysis = async (tid) => {
+    setAnalysisView({ thread_id: tid, loading: true, text: '' })
+    try {
+      const r = await apiFetch(`${API_URL}/threads/${tid}/analysis`, { method: 'POST' })
+      const d = await r.json()
+      setAnalysisView({ thread_id: tid, loading: false, text: d.summary || d.message || 'no analysis returned' })
+    } catch (e) {
+      setAnalysisView({ thread_id: tid, loading: false, text: `Analysis failed: ${e}` })
+    }
+  }
+
+  // ---- THE DO-BOX (8/1): preview the plan, then FIRE ----
+  const doPreview = async (t) => {
+    const text = (doTexts[t.task_key] || '').trim()
+    if (!text) return
+    setDoBusyKey(t.task_key)
+    try {
+      const res = await apiFetch(`${API_URL}/do/preview`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, order_id: t.order_id || null }),
+      })
+      const d = await res.json()
+      if (d.status !== 'ok') throw new Error(d.message || 'preview failed')
+      setDoOverride(!!d.override)
+      setDoPlan({ task: t, text, ...d })
+    } catch (e) { alert(`DO preview failed: ${e}`) } finally { setDoBusyKey(null) }
+  }
+
+  const doFire = async () => {
+    if (!doPlan) return
+    setDoFiring(true)
+    try {
+      const res = await apiFetch(`${API_URL}/do/execute`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: doPlan.text, order_id: doPlan.order_id, override: doOverride }),
+      })
+      const d = await res.json()
+      if (d.status !== 'ok') throw new Error(d.message || 'fire failed')
+      const r = d.result || {}
+      flash(`⚡ ${(d.action || '').toUpperCase()} fired on #${d.order_id}${d.override ? ' — OVERRIDE' : ''}: ${r.message || r.status || 'done'}${r.reason ? ' — ' + r.reason : ''}`)
+      setDoTexts(x => { const n = { ...x }; delete n[doPlan.task.task_key]; return n })
+      setDoPlan(null)
+      await load()
+    } catch (e) { alert(`DO fire failed: ${e}`) } finally { setDoFiring(false) }
   }
 
   const markHandled = async (t) => {
@@ -485,8 +547,11 @@ export default function TaskBoard() {
     const days = ageDays(t.date_str)
     const isEmail = !!t.gmail_id && t.type.startsWith('unread')
     const isNeedsReply = t.type === 'needs-reply'
-    const ex = t.order_id ? exchanges[t.order_id] : null
-    // the composer anchors to the card's own email, else the order's latest
+    // ALL EMAILS EQUAL (8/1): order exchange first, thread exchange when
+    // the card has no order
+    const ex = (t.order_id && exchanges[t.order_id])
+      || (t.thread_id && exchanges['thread:' + t.thread_id]) || null
+    // the composer anchors to the card's own email, else the latest
     // exchange — any card with words to answer gets the intent box
     const anchorId = t.gmail_id || (ex && ex.anchor_id) || null
     const hasComposer = !!anchorId && t.type !== 'plaud'
@@ -531,7 +596,8 @@ export default function TaskBoard() {
           </div>
         )}
 
-        {/* EMAIL SUMMARY — the last two messages, verbatim (William 7/31) */}
+        {/* EMAIL SUMMARY — the last two messages, verbatim (William 7/31;
+            8/1: every card, thread exchange when no order) */}
         {ex && ex.has_exchange && (() => {
           const msgs = []
           if (ex.you) msgs.push({ label: 'YOU sent', at: ex.you.at, who: ex.you.to, body: ex.you.body, blue: true })
@@ -605,10 +671,10 @@ export default function TaskBoard() {
                 onClick={() => setFuOpen(o => (o === t.order_id ? null : t.order_id))}>+ Follow-up</button>
             </>
           )}
-          {t.order_id && (
-            <button className="btn btn-sm" title="the full AI rundown of this order"
+          {(t.order_id || t.thread_id) && (
+            <button className="btn btn-sm" title="the full AI rundown — order record, or the conversation itself when no order"
               style={{ borderColor: '#DDD6FE', color: '#7C3AED', fontWeight: 700 }}
-              onClick={() => openAnalysis(t.order_id)}>Full Analysis</button>
+              onClick={() => t.order_id ? openAnalysis(t.order_id) : openThreadAnalysis(t.thread_id)}>Full Analysis</button>
           )}
           {isEmail && (
             <>
@@ -644,6 +710,23 @@ export default function TaskBoard() {
             </button>
           </div>
         )}
+
+        {/* THE DO-BOX (8/1, William's law change) — separate container,
+            separate logic: typed commands FIRE REAL MACHINERY after a
+            preview. The say-box above stays words-only forever. */}
+        <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '6px',
+          borderLeft: '3px solid #DC2626', paddingLeft: '8px' }}>
+          <input type="text" value={doTexts[t.task_key] ?? ''}
+            placeholder={`tell the robot what to DO — invoice · bol · dispatch — THIS ONE FIRES${t.order_id ? '' : ' (type the order #)'}`}
+            onChange={e => setDoTexts(x => ({ ...x, [t.task_key]: e.target.value }))}
+            onKeyDown={e => { if (e.key === 'Enter' && (doTexts[t.task_key] || '').trim()) doPreview(t) }}
+            style={{ flex: 1, minWidth: '220px', padding: '5px 8px' }} />
+          <button className="btn btn-sm" disabled={doBusyKey === t.task_key || !(doTexts[t.task_key] || '').trim()}
+            style={{ background: 'rgba(220,38,38,0.10)', color: '#DC2626', fontWeight: 700 }}
+            onClick={() => doPreview(t)}>
+            {doBusyKey === t.task_key ? 'Planning…' : '⚡ Preview action'}
+          </button>
+        </div>
 
         {fuOpen && t.order_id === fuOpen && canMark && (
           <div style={{ display: 'flex', gap: '5px', marginTop: '6px', flexWrap: 'wrap' }}>
@@ -800,6 +883,55 @@ export default function TaskBoard() {
         })()}
       </div>
 
+      {/* THE DO-BOX PLAN — preview before machinery fires (8/1) */}
+      {doPlan && (
+        <div onClick={() => !doFiring && setDoPlan(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--card, #fff)', borderRadius: '10px', padding: '20px', maxWidth: '640px', width: '92%', maxHeight: '86vh', overflow: 'auto' }}>
+            <h3 style={{ margin: '0 0 4px', color: '#DC2626' }}>⚡ THE DO-BOX — preview before it fires</h3>
+            <div style={{ fontSize: '14px', fontWeight: 700, margin: '8px 0 2px' }}>{doPlan.label}</div>
+            <div style={{ fontSize: '13px', color: 'var(--muted, #666)', marginBottom: '8px' }}>
+              Order <span className="order-id">#{doPlan.order_id}</span>
+              {doPlan.shipment_id ? ` · shipment ${doPlan.shipment_id}` : ''}
+            </div>
+            {(doPlan.lines || []).map((l, i) => (
+              <div key={i} style={{ fontSize: '13px', marginBottom: '4px' }}>{l}</div>
+            ))}
+            {(doPlan.gates || []).length > 0 && (
+              <table className="orders-table" style={{ marginTop: '8px' }}>
+                <thead><tr><th>Gate</th><th>Standing</th><th></th></tr></thead>
+                <tbody>
+                  {doPlan.gates.map((g, i) => (
+                    <tr key={i}>
+                      <td>{g.gate}</td>
+                      <td style={{ color: g.ok ? '#059669' : '#DC2626', fontWeight: 700 }}>{g.ok ? 'CLEAR' : 'IN THE WAY'}</td>
+                      <td style={{ maxWidth: '260px', fontSize: '12px' }}>{g.detail || ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {doPlan.blocked && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', color: '#B45309', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>
+                <input type="checkbox" checked={doOverride} onChange={e => setDoOverride(e.target.checked)} />
+                OVERRIDE — fire anyway. Your call; the record will say it was forced.
+              </label>
+            )}
+            <div style={{ display: 'flex', gap: '8px', marginTop: '14px', alignItems: 'center' }}>
+              <button className="btn btn-sm"
+                disabled={doFiring || (doPlan.blocked && doPlan.needs_override && !doOverride)}
+                style={{ background: '#DC2626', color: '#fff', fontWeight: 800, padding: '8px 18px', fontSize: '14px' }}
+                onClick={doFire}>{doFiring ? 'Firing…' : '🔥 FIRE'}</button>
+              <button className="btn btn-sm" disabled={doFiring} onClick={() => setDoPlan(null)}>Cancel</button>
+              <span style={{ fontSize: '12px', color: 'var(--muted, #888)' }}>
+                this runs the real machine — invoice sends, BOLs land at R+L, dispatches go out
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* THE PREVIEW POPUP — chain + editable draft + SEND */}
       {preview && (
         <div onClick={() => !sendBusy && setPreview(null)}
@@ -879,13 +1011,17 @@ export default function TaskBoard() {
         </div>
       )}
 
-      {/* FULL ANALYSIS POPUP — the same rundown as the orders screen */}
+      {/* FULL ANALYSIS POPUP — order rundown, or the conversation itself */}
       {analysisView && (
         <div onClick={() => setAnalysisView(null)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div onClick={e => e.stopPropagation()}
             style={{ background: 'var(--card, #fff)', borderRadius: '10px', padding: '20px', maxWidth: '780px', width: '92%', maxHeight: '86vh', overflow: 'auto' }}>
-            <h3 style={{ margin: '0 0 10px' }}>Full Analysis — order <span className="order-id">#{analysisView.order_id}</span></h3>
+            <h3 style={{ margin: '0 0 10px' }}>
+              Full Analysis — {analysisView.order_id
+                ? <>order <span className="order-id">#{analysisView.order_id}</span></>
+                : 'this conversation'}
+            </h3>
             {analysisView.loading
               ? <div className="empty">Reading the whole record… (15-30 seconds)</div>
               : <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: '13px', lineHeight: 1.6 }}>{analysisView.text}</pre>}
