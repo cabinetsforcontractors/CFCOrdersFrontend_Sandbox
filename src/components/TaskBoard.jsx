@@ -114,6 +114,17 @@ export default function TaskBoard() {
   const [sendTos, setSendTos] = useState({})           // task_key -> picked recipient
   const [cancelModal, setCancelModal] = useState(null) // {task_key, order_id}
 
+  // PHASE 1 (8/3, the lessons-learned kit): order threads panel, money-strip
+  // drill, discrepancy verdicts, TEST badges
+  const [threadsByOrder, setThreadsByOrder] = useState({})   // order_id -> [threads]
+  const [threadsOpen, setThreadsOpen] = useState(() => new Set())
+  const [threadAnchors, setThreadAnchors] = useState({})     // task_key -> {message_id, subject, is_alert}
+  const [awaitingOrders, setAwaitingOrders] = useState(null) // null = drill closed
+  const [awaitingBusy, setAwaitingBusy] = useState(null)
+  const [rowsByOrder, setRowsByOrder] = useState({})         // order_id -> supplier rows
+  const [verdictBusy, setVerdictBusy] = useState(null)
+  const [testIds, setTestIds] = useState(() => new Set())
+
   // THE DO-BOX (8/1) — typed commands that fire real machinery
   const [doTexts, setDoTexts] = useState({})
   const [doBusyKey, setDoBusyKey] = useState(null)
@@ -459,6 +470,95 @@ export default function TaskBoard() {
     if (d.status === 'ok') setPlaudView(d)
   }
 
+  // ---- PHASE 1 (8/3) ----
+  const loadTestIds = useCallback(async () => {
+    try {
+      const r = await apiFetch(`${API_URL}/test-orders`)
+      if (r.ok) {
+        const d = await r.json()
+        const ids = (d.orders || d.test_orders || [])
+          .map(x => String(x.order_id || x))
+        setTestIds(new Set(ids))
+      }
+    } catch { /* badges are decoration */ }
+  }, [])
+  useEffect(() => { loadTestIds() }, [loadTestIds])
+
+  const openAwaiting = async () => {
+    if (awaitingOrders) { setAwaitingOrders(null); return }
+    try {
+      const r = await apiFetch(`${API_URL}/queue/awaiting-orders?z=${Date.now()}`)
+      const d = await r.json()
+      if (d.status === 'ok') setAwaitingOrders(d.orders)
+      else throw new Error(d.message || `HTTP ${r.status}`)
+    } catch (e) { alert(`Awaiting drill failed: ${e}`) }
+  }
+
+  const markPaid = async (oid) => {
+    if (!window.confirm(`Mark order #${oid} PAID?\n\nStamps payment_received only — no emails fire, nothing dispatches.`)) return
+    setAwaitingBusy(oid)
+    try {
+      const r = await apiFetch(`${API_URL}/orders/${oid}/checkpoint`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checkpoint: 'payment_received' }),
+      })
+      const d = await r.json()
+      if (d.status !== 'ok') throw new Error(d.message || 'stamp failed')
+      flash(`#${oid} marked paid ✓`)
+      try {
+        const rr = await apiFetch(`${API_URL}/queue/awaiting-orders?z=${Date.now()}`)
+        const dd = await rr.json()
+        if (dd.status === 'ok') setAwaitingOrders(dd.orders)
+      } catch { /* drill refresh best-effort */ }
+      try {
+        const ms = await apiFetch(`${API_URL}/queue/money-strip?z=${Date.now()}`)
+        if (ms.ok) setStrip(await ms.json())
+      } catch { /* strip refresh best-effort */ }
+    } catch (e) { alert(`Mark paid failed: ${e}`) } finally { setAwaitingBusy(null) }
+  }
+
+  const toggleThreads = async (t) => {
+    const oid = t.order_id
+    setThreadsOpen(s => {
+      const n = new Set(s)
+      if (n.has(t.task_key)) n.delete(t.task_key); else n.add(t.task_key)
+      return n
+    })
+    if (!threadsByOrder[oid]) {
+      try {
+        const r = await apiFetch(`${API_URL}/orders/${oid}/threads?z=${Date.now()}`)
+        const d = await r.json()
+        if (d.status === 'ok') setThreadsByOrder(m => ({ ...m, [oid]: d.threads }))
+      } catch { setThreadsByOrder(m => ({ ...m, [oid]: [] })) }
+    }
+    if (!rowsByOrder[oid]) {
+      try {
+        const r = await apiFetch(`${API_URL}/supplier-orders?order_id=${oid}`)
+        const d = await r.json()
+        const rows = d.rows || d.supplier_orders || (Array.isArray(d) ? d : [])
+        setRowsByOrder(m => ({ ...m, [oid]: rows }))
+      } catch { /* legs are optional */ }
+    }
+  }
+
+  const setVerdict = async (oid, rowId, status, note) => {
+    setVerdictBusy(rowId)
+    try {
+      const r = await apiFetch(`${API_URL}/supplier-orders/${rowId}/status`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, note }),
+      })
+      const d = await r.json()
+      if (d.status !== 'ok') throw new Error(d.message || 'verdict failed')
+      flash(`Supplier leg → ${status} ✓`)
+      try {
+        const rr = await apiFetch(`${API_URL}/supplier-orders?order_id=${oid}`)
+        const dd = await rr.json()
+        setRowsByOrder(m => ({ ...m, [oid]: dd.rows || dd.supplier_orders || [] }))
+      } catch { /* refresh best-effort */ }
+    } catch (e) { alert(`Verdict failed: ${e}`) } finally { setVerdictBusy(null) }
+  }
+
   // ---- THE COMPOSER ----
   const writePreview = async (t, anchorId) => {
     const intent = (intents[t.task_key] || '').trim()
@@ -552,8 +652,12 @@ export default function TaskBoard() {
     const ex = (t.order_id && exchanges[t.order_id])
       || (t.thread_id && exchanges['thread:' + t.thread_id]) || null
     // the composer anchors to the card's own email, else the latest
-    // exchange — any card with words to answer gets the intent box
-    const anchorId = t.gmail_id || (ex && ex.anchor_id) || null
+    // exchange — any card with words to answer gets the intent box.
+    // PHASE 1 (8/3): a thread picked in the Threads panel WINS — the
+    // 5750/5696 wrong-thread lesson: you always see which chain the
+    // reply will ride.
+    const tAnchor = threadAnchors[t.task_key] || null
+    const anchorId = (tAnchor && tAnchor.message_id) || t.gmail_id || (ex && ex.anchor_id) || null
     const hasComposer = !!anchorId && t.type !== 'plaud'
     const canMark = t.order_id && t.type !== 'manual' && t.type !== 'follow-up' && !isNeedsReply
     const isOpen = expanded.has(t.task_key)
@@ -570,6 +674,11 @@ export default function TaskBoard() {
           <span style={{ fontSize: '12px', color: 'var(--muted, #888)' }}>{isOpen ? '▾' : '▸'}</span>
           <span style={{ fontSize: '10px', fontWeight: 800, color, letterSpacing: '0.5px' }}>{badge}</span>
           {t.order_id && <span className="order-id">#{t.order_id}</span>}
+          {t.order_id && testIds.has(String(t.order_id)) && (
+            <span title="Registered test order — its money never counts in the strip"
+              style={{ fontSize: '10px', fontWeight: 800, color: '#fff', background: '#F59E0B',
+                borderRadius: '4px', padding: '1px 6px', letterSpacing: '0.5px' }}>TEST</span>
+          )}
           <span style={{ fontWeight: 600, fontSize: '14px' }}>
             {t.type === 'plaud'
               ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); openPlaud(t.task_key) }}>{t.title}</a>
@@ -691,6 +800,79 @@ export default function TaskBoard() {
           )}
         </div>
 
+        {/* PHASE 1 (8/3): THREADS & LEGS — every conversation on the order
+            by exact SUBJECT + who spoke last; robot-alert threads warned;
+            discrepancy legs get one-click verdicts */}
+        {t.order_id && (
+          <div style={{ marginTop: '8px' }}>
+            <button className="btn btn-sm" onClick={() => toggleThreads(t)}
+              style={{ fontSize: '12px', fontWeight: 600 }}>
+              {threadsOpen.has(t.task_key) ? '▾' : '▸'} 📧 Threads & supplier legs
+            </button>
+            {threadsOpen.has(t.task_key) && (
+              <div style={{ border: '1px solid var(--border, #ddd)', borderRadius: '8px',
+                padding: '8px 10px', marginTop: '6px', fontSize: '12px' }}>
+                {!(threadsByOrder[t.order_id] || []).length && (
+                  <div style={{ color: 'var(--muted, #888)' }}>no ledger threads on this order yet</div>
+                )}
+                {(threadsByOrder[t.order_id] || []).map(th => (
+                  <div key={th.thread_id} style={{ display: 'flex', gap: '8px', alignItems: 'baseline',
+                    flexWrap: 'wrap', padding: '4px 0', borderBottom: '1px solid var(--border, #eee)' }}>
+                    <span style={{ fontWeight: 700 }}>{th.subject || '(no subject)'}</span>
+                    {th.is_alert && (
+                      <span title="Internal robot-alert thread — a reply here does NOT join the order's real conversation"
+                        style={{ fontSize: '10px', fontWeight: 800, color: '#fff', background: '#DC2626',
+                          borderRadius: '4px', padding: '1px 6px' }}>⚠ ROBOT ALERT</span>
+                    )}
+                    <span style={{ color: 'var(--muted, #888)' }}>
+                      {th.who_spoke_last === 'us' ? 'you spoke last' : 'THEY spoke last'} · {fmtDate(th.last_at)} · {th.messages} msg
+                    </span>
+                    {th.newest_inbound_id && (
+                      <button className="btn btn-sm" style={{ fontSize: '11px' }}
+                        onClick={() => { setThreadAnchors(a => ({ ...a, [t.task_key]:
+                          { message_id: th.newest_inbound_id, subject: th.subject, is_alert: th.is_alert } }));
+                          flash(`Composer anchored to: ${th.subject}`) }}>
+                        ✍ Reply in this thread
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {(rowsByOrder[t.order_id] || []).filter(r => r.status !== 'canceled').map(r => (
+                  <div key={r.id} style={{ display: 'flex', gap: '8px', alignItems: 'baseline',
+                    flexWrap: 'wrap', padding: '4px 0' }}>
+                    <span style={{ fontWeight: 700, color: '#B45309' }}>🏭 {r.warehouse}</span>
+                    <span style={{ color: r.status === 'discrepancy' ? '#DC2626' : 'var(--muted, #888)',
+                      fontWeight: r.status === 'discrepancy' ? 700 : 400 }}>{r.status}</span>
+                    {r.supplier_doc_ref && <span style={{ color: 'var(--muted, #888)' }}>doc {r.supplier_doc_ref}</span>}
+                    {r.status === 'discrepancy' && (
+                      <>
+                        <button className="btn btn-sm" disabled={verdictBusy === r.id} style={{ fontSize: '11px' }}
+                          onClick={() => setVerdict(t.order_id, r.id, 'discrepancy',
+                            'REAL — keep watching (board verdict)')}>Real — keep</button>
+                        <button className="btn btn-sm" disabled={verdictBusy === r.id} style={{ fontSize: '11px' }}
+                          onClick={() => setVerdict(t.order_id, r.id, 'delivered',
+                            'CLOSED via board: parser artifact, not a real issue')}>Parser artifact — close</button>
+                        <button className="btn btn-sm" disabled={verdictBusy === r.id} style={{ fontSize: '11px' }}
+                          onClick={() => setVerdict(t.order_id, r.id, 'delivered',
+                            'CLOSED via board: order complete')}>Order complete — close</button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {hasComposer && tAnchor && (
+          <div style={{ fontSize: '12px', marginTop: '6px', padding: '4px 8px', borderRadius: '6px',
+            background: tAnchor.is_alert ? 'rgba(220,38,38,0.10)' : 'rgba(29,78,216,0.08)',
+            color: tAnchor.is_alert ? '#DC2626' : '#1D4ED8', fontWeight: 600 }}>
+            ↩ Reply will ride: “{tAnchor.subject}”
+            {tAnchor.is_alert && ' — ⚠ THIS IS A ROBOT-ALERT THREAD, not the order’s real conversation'}
+          </div>
+        )}
+
         {hasComposer && (
           <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '6px' }}>
             <input type="text" value={intents[t.task_key] ?? ''}
@@ -747,11 +929,47 @@ export default function TaskBoard() {
 
   return (
     <div style={{ padding: '16px 0' }}>
-      {/* MONEY STRIP — one line, always on top (William: "keep that one line") */}
+      {/* MONEY STRIP — one line, always on top (William: "keep that one line").
+          PHASE 1 (8/3): click = the drill-down, every order behind the number,
+          each with one-click Mark-Paid (trigger-silent) + TEST badges */}
       {strip && strip.line && (
-        <div style={{ fontSize: '14px', fontWeight: 600, padding: '8px 14px', marginBottom: '12px',
-          border: '1px solid var(--border, #ddd)', borderRadius: '8px', background: 'rgba(5,150,105,0.06)' }}>
+        <div onClick={openAwaiting}
+          title="Click: every order behind the Awaiting number, with one-click Mark paid"
+          style={{ fontSize: '14px', fontWeight: 600, padding: '8px 14px', marginBottom: '12px',
+            border: '1px solid var(--border, #ddd)', borderRadius: '8px',
+            background: 'rgba(5,150,105,0.06)', cursor: 'pointer' }}>
           💰 {strip.line}
+          <span style={{ fontSize: '11px', color: 'var(--muted, #888)', marginLeft: '8px' }}>
+            {awaitingOrders ? '▾ close' : '▸ drill'}
+          </span>
+        </div>
+      )}
+      {awaitingOrders && (
+        <div style={{ border: '1px solid var(--border, #ddd)', borderRadius: '8px',
+          padding: '8px 12px', marginBottom: '12px', fontSize: '13px' }}>
+          <div style={{ fontWeight: 700, marginBottom: '4px' }}>
+            AWAITING PAYMENT — {awaitingOrders.length} orders
+          </div>
+          {awaitingOrders.map(o => (
+            <div key={o.order_id} style={{ display: 'flex', gap: '10px', alignItems: 'baseline',
+              flexWrap: 'wrap', padding: '3px 0', borderBottom: '1px solid var(--border, #eee)' }}>
+              <span className="order-id">#{o.order_id}</span>
+              {o.is_test && (
+                <span style={{ fontSize: '10px', fontWeight: 800, color: '#fff', background: '#F59E0B',
+                  borderRadius: '4px', padding: '1px 6px' }}>TEST</span>
+              )}
+              <span>{o.company_name || o.customer_name || o.email || ''}</span>
+              <span style={{ fontWeight: 700 }}>${Number(o.order_total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+              <span style={{ color: 'var(--muted, #888)', fontSize: '12px' }}>
+                invoiced {fmtDate(o.payment_link_sent_at)}
+              </span>
+              <button className="btn btn-sm" disabled={awaitingBusy === o.order_id}
+                style={{ marginLeft: 'auto', fontSize: '11px', color: '#059669', fontWeight: 700 }}
+                onClick={e => { e.stopPropagation(); markPaid(o.order_id) }}>
+                {awaitingBusy === o.order_id ? 'Stamping…' : '✓ Mark paid'}
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
