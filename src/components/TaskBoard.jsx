@@ -24,7 +24,7 @@
  * stays words-only forever; the DO-box is the muscle.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { API_URL } from '../config'
 import { apiFetch } from '../api'
 
@@ -635,8 +635,17 @@ export default function TaskBoard() {
       thread_id: c.thread_id,
       date_str: c.last_inbound,
     }))
+  // SORT LAW (William 8/4): ORDER-RELATED cards first (anything carrying
+  // an order # or supplier/customer mail), YOUR TASK cards under them.
+  // Within each group: oldest first, as before.
+  const isOrderCard = (t) =>
+    !!t.order_id || (t.type !== 'manual' && t.type !== 'follow-up'
+                     && t.type !== 'plaud')
   const queue = [...boardTasks, ...awaitingCards]
     .sort((a, b) => {
+      const ga = isOrderCard(a) ? 0 : 1
+      const gb = isOrderCard(b) ? 0 : 1
+      if (ga !== gb) return ga - gb
       const da = new Date(a.date_str || 0).getTime() || 0
       const db = new Date(b.date_str || 0).getTime() || 0
       return da - db
@@ -1088,14 +1097,33 @@ export default function TaskBoard() {
                   <tbody>
                     {doneList.map((e, i) => {
                       const redirected = (e.detail || '').includes('SAFETY REDIRECT')
+                      const k = `done:${i}`
+                      const open = expanded.has(k)
+                      const hasData = e.data && Object.keys(e.data).length > 0
                       return (
-                        <tr key={i}><td><span className="order-id">#{e.order_id}</span></td>
-                          <td>{e.event_type}</td>
-                          <td style={{ maxWidth: '320px', color: redirected ? '#B45309' : 'var(--muted, #666)', fontWeight: redirected ? 700 : 400 }}>
-                            {e.detail || '—'}
-                          </td>
-                          <td>{e.source || '—'}</td>
-                          <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(e.at)}</td></tr>
+                        <React.Fragment key={i}>
+                          <tr style={{ cursor: hasData ? 'pointer' : 'default' }}
+                            title={hasData ? 'click to open the full record (William 8/4)' : ''}
+                            onClick={() => hasData && setExpanded(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n })}>
+                            <td>{hasData ? (open ? '▾ ' : '▸ ') : ''}<span className="order-id">#{e.order_id}</span></td>
+                            <td>{e.event_type}</td>
+                            <td style={{ maxWidth: '320px', color: redirected ? '#B45309' : 'var(--muted, #666)', fontWeight: redirected ? 700 : 400 }}>
+                              {e.detail || '—'}
+                            </td>
+                            <td>{e.source || '—'}</td>
+                            <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(e.at)}</td>
+                          </tr>
+                          {open && hasData && (
+                            <tr><td colSpan={5} style={{ background: 'var(--panel, #FAFAFA)', fontSize: '12px' }}>
+                              {Object.entries(e.data).map(([kk, vv]) => (
+                                <div key={kk} style={{ margin: '2px 0' }}>
+                                  <span style={{ fontWeight: 700 }}>{kk}:</span>{' '}
+                                  <span style={{ whiteSpace: 'pre-wrap', color: 'var(--muted, #555)' }}>{String(vv)}</span>
+                                </div>
+                              ))}
+                            </td></tr>
+                          )}
+                        </React.Fragment>
                       )
                     })}
                   </tbody>
