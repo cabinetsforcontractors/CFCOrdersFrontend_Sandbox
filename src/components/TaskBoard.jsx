@@ -95,6 +95,8 @@ export default function TaskBoard() {
   const [newTask, setNewTask] = useState('')
   const [newTaskDue, setNewTaskDue] = useState('')
   const [newTaskRepeat, setNewTaskRepeat] = useState('')
+  const [callLogOpen, setCallLogOpen] = useState(false)
+  const [callLogText, setCallLogText] = useState('')
   const [plaudOpen, setPlaudOpen] = useState(false)
   const [plaudTitle, setPlaudTitle] = useState('')
   const [plaudText, setPlaudText] = useState('')
@@ -1058,7 +1060,35 @@ export default function TaskBoard() {
         </select>
         <button className="btn btn-sm" onClick={addManual} disabled={!newTask.trim()}>Add task</button>
         <button className="btn btn-sm" onClick={() => setPlaudOpen(o => !o)}>{plaudOpen ? 'Close recorder box' : 'Paste recorder summary'}</button>
+        <button className="btn btn-sm" title="phone calls are record holes (8/4) - one line right after you hang up"
+          style={{ fontWeight: 700 }}
+          onClick={() => setCallLogOpen(o => !o)}>📞 Call log</button>
       </div>
+      {callLogOpen && (
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', margin: '0 0 12px' }}>
+          <input type="text" value={callLogText} autoFocus
+            placeholder="Who called + what was said — e.g. Gerald: GB sent wrong front on 5677, wants replacement"
+            onChange={e => setCallLogText(e.target.value)}
+            onKeyDown={async e => {
+              if (e.key === 'Enter' && callLogText.trim()) {
+                await apiFetch(`${API_URL}/tasks/manual`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ text: `CALL LOG ${new Date().toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}: ${callLogText.trim()}` }),
+                })
+                setCallLogText(''); setCallLogOpen(false); await load()
+              }
+            }}
+            style={{ flex: 1, minWidth: '300px', padding: '6px 10px' }} />
+          <button className="btn btn-sm" disabled={!callLogText.trim()}
+            onClick={async () => {
+              await apiFetch(`${API_URL}/tasks/manual`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: `CALL LOG ${new Date().toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}: ${callLogText.trim()}` }),
+              })
+              setCallLogText(''); setCallLogOpen(false); await load()
+            }}>Log the call</button>
+        </div>
+      )}
       {plaudOpen && (
         <div style={{ border: '1px solid var(--border, #ddd)', borderRadius: '6px', padding: '10px', marginBottom: '14px' }}>
           <input type="text" value={plaudTitle} placeholder="Summary title (e.g. Call with Eddie 7/26)"
