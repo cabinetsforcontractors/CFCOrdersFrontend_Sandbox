@@ -94,6 +94,7 @@ export default function TaskBoard() {
   const [banner, setBanner] = useState(null)
   const [newTask, setNewTask] = useState('')
   const [newTaskDue, setNewTaskDue] = useState('')
+  const [newTaskRepeat, setNewTaskRepeat] = useState('')
   const [plaudOpen, setPlaudOpen] = useState(false)
   const [plaudTitle, setPlaudTitle] = useState('')
   const [plaudText, setPlaudText] = useState('')
@@ -447,9 +448,9 @@ export default function TaskBoard() {
     if (!newTask.trim()) return
     const res = await apiFetch(`${API_URL}/tasks/manual`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: newTask.trim(), due_date: newTaskDue || null }),
+      body: JSON.stringify({ text: newTask.trim(), due_date: newTaskDue || null, repeat: newTaskRepeat || null }),
     })
-    if ((await res.json()).status === 'ok') { setNewTask(''); setNewTaskDue(''); await load() }
+    if ((await res.json()).status === 'ok') { setNewTask(''); setNewTaskDue(''); setNewTaskRepeat(''); await load() }
   }
 
   const addPlaud = async () => {
@@ -784,8 +785,20 @@ export default function TaskBoard() {
                 title="move off the active board into HANDLED (8/4)"
                 style={{ background: 'rgba(5,150,105,0.12)', color: '#059669', fontWeight: 700 }}
                 onClick={() => markHandled(t)}>✔ HANDLED</button>
+              {t.repeat && <span style={{ fontSize: '11px', fontWeight: 800, color: '#7C3AED' }} title="Done rolls the date forward">↻ {t.repeat}</span>}
               <input type="date" defaultValue={t.due_date || ''} title="change follow-up date"
                 onChange={e => changeDue(t.task_key, e.target.value)} style={{ padding: '3px' }} />
+              <button className="btn btn-sm" disabled={busyKey === t.task_key}
+                title="delete this task outright (kills a recurring task for good)"
+                style={confirmDelete === t.task_key ? { background: '#DC2626', color: '#fff', fontWeight: 700 } : { color: '#DC2626' }}
+                onClick={async () => {
+                  if (confirmDelete !== t.task_key) { setConfirmDelete(t.task_key); return }
+                  setConfirmDelete(null); setBusyKey(t.task_key)
+                  try {
+                    await apiFetch(`${API_URL}/tasks/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task_key: t.task_key }) })
+                    await load()
+                  } finally { setBusyKey(null) }
+                }}>{confirmDelete === t.task_key ? 'Sure? DELETE!' : 'Delete'}</button>
             </>
           ) : (
             <>
@@ -1037,6 +1050,12 @@ export default function TaskBoard() {
           onKeyDown={e => { if (e.key === 'Enter') addManual() }}
           style={{ flex: 1, minWidth: '260px', padding: '6px 10px' }} />
         <input type="date" value={newTaskDue} onChange={e => setNewTaskDue(e.target.value)} style={{ padding: '5px' }} title="optional follow-up date" />
+        <select value={newTaskRepeat} onChange={e => setNewTaskRepeat(e.target.value)} style={{ padding: '5px' }} title="repeats (8/4): Done rolls the date forward instead of retiring the task">
+          <option value="">no repeat</option>
+          <option value="daily">repeats daily</option>
+          <option value="weekly">repeats weekly</option>
+          <option value="monthly">repeats monthly</option>
+        </select>
         <button className="btn btn-sm" onClick={addManual} disabled={!newTask.trim()}>Add task</button>
         <button className="btn btn-sm" onClick={() => setPlaudOpen(o => !o)}>{plaudOpen ? 'Close recorder box' : 'Paste recorder summary'}</button>
       </div>
