@@ -711,7 +711,8 @@ export default function TaskBoard() {
           const msgs = []
           if (ex.you) msgs.push({ label: 'YOU sent', at: ex.you.at, who: ex.you.to, body: ex.you.body, blue: true })
           if (ex.them) msgs.push({ label: 'THEY replied', at: ex.them.at, who: ex.them.from, body: ex.them.body, blue: false })
-          msgs.sort((a, b) => (a.at || '').localeCompare(b.at || ''))
+          // NEWEST ON TOP (William 8/4): the latest word leads the card
+          msgs.sort((a, b) => (b.at || '').localeCompare(a.at || ''))
           return (
             <div style={{ marginTop: '8px', borderLeft: '3px solid var(--border, #ddd)', paddingLeft: '10px' }}>
               {msgs.map((m, i) => (
@@ -750,6 +751,10 @@ export default function TaskBoard() {
               <button className="btn btn-sm" disabled={busyKey === t.task_key}
                 style={{ background: 'rgba(5,150,105,0.12)', color: '#059669', fontWeight: 700 }}
                 onClick={() => markDone(t.task_key)}>Done</button>
+              <button className="btn btn-sm" disabled={busyKey === t.task_key}
+                title="move off the active board into HANDLED (8/4)"
+                style={{ background: 'rgba(5,150,105,0.12)', color: '#059669', fontWeight: 700 }}
+                onClick={() => markHandled(t)}>✔ HANDLED</button>
               <input type="date" defaultValue={t.due_date || ''} title="change follow-up date"
                 onChange={e => changeDue(t.task_key, e.target.value)} style={{ padding: '3px' }} />
             </>
