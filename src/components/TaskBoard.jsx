@@ -714,6 +714,26 @@ export default function TaskBoard() {
           </div>
         )}
 
+        {/* TODAY / PENDING SPLIT (William 8/4): what fires now vs what
+            waits in line — trusted customers dispatch before payment */}
+        {t.beats && ((t.beats.today || []).length > 0 || (t.beats.pending || []).length > 0) && (
+          <div style={{ fontSize: '12.5px', margin: '5px 0 0', lineHeight: 1.5 }}>
+            {(t.beats.today || []).length > 0 && (
+              <div>
+                <span style={{ fontWeight: 800, color: '#059669' }}>TODAY →</span>{' '}
+                {t.beats.today.join(' · ')}
+                {t.beats.trusted && <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: 800, color: '#0E7490' }}>TRUSTED</span>}
+              </div>
+            )}
+            {(t.beats.pending || []).length > 0 && (
+              <div>
+                <span style={{ fontWeight: 800, color: '#B45309' }}>PENDING →</span>{' '}
+                <span style={{ color: 'var(--muted, #666)' }}>{t.beats.pending.join(' · ')}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* EMAIL SUMMARY — the last two messages, verbatim (William 7/31;
             8/1: every card, thread exchange when no order) */}
         {ex && ex.has_exchange && (() => {
